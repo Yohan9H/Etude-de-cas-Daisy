@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Démonstrations — widget Daisy</title>
+
+  <style>
+    body { font: 16px/1.6 system-ui, sans-serif; max-width: 40rem; margin: 3rem auto; padding: 0 1.2rem; }
+    a    { display: block; padding: 1rem; margin: .5rem 0; border: 1px solid #ddd;
+           border-radius: 8px; text-decoration: none; color: inherit; }
+    a:hover { background: #f7f7f7; }
+    small   { color: #666; }
+  </style>
+</head>
+
+<body>
+  <h1>Démonstrations</h1>
+
+  <p>
+    Ces pages sont servies sur <code>localhost:4000</code>, le widget sur
+    <code>localhost:5173</code>. Deux ports différents, donc deux origines
+    différentes : l'isolation de l'iframe est réellement mise à l'épreuve.
+  </p>
+
+  <a href="/hostile.html">
+    <strong>Site hostile</strong><br>
+    <small>CSS agressif avec !important, colonne de 320 px, conteneur animé, z-index à 999999</small>
+  </a>
+
+  <a href="/normal.html">
+    <strong>Site sobre</strong><br>
+    <small>Un site bien élevé, pour comparer</small>
+  </a>
+
+  <p>
+    <small>
+      Pour provoquer les cas d'erreur :
+      <a href="http://localhost:3001/__mock" style="display:inline; border:0; padding:0;">page de contrôle du faux serveur</a>
+    </small>
+  </p>
+</body>
+</html>

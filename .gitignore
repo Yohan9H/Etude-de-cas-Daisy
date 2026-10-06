@@ -1,0 +1,9 @@
+# Notes de travail personnelles — pas destinées au rendu
+notes-perso/
+
+node_modules/
+dist/
+.DS_Store
+*.log
+.env
+.env.local

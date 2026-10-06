@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Atelier Terre &amp; Feu</title>
+
+  <!--
+    PAGE DE DÉMONSTRATION N° 2 : un site sobre et bien élevé.
+
+    Elle sert de point de comparaison avec hostile.html.
+    Montrer les deux côte à côte est plus parlant que la page hostile seule :
+    on voit que le widget est identique dans les deux cas.
+  -->
+
+  <style>
+    :root {
+      --texte: #2c2a27;
+      --doux: #6b655d;
+      --fond: #faf8f5;
+    }
+
+    body {
+      margin: 0;
+      font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      color: var(--texte);
+      background: var(--fond);
+    }
+
+    header {
+      padding: 20px 24px;
+      border-bottom: 1px solid #e8e3dc;
+    }
+
+    header strong {
+      font-size: 18px;
+      letter-spacing: .01em;
+    }
+
+    main {
+      max-width: 44rem;
+      margin: 0 auto;
+      padding: 40px 24px 80px;
+    }
+
+    h1 {
+      font-size: 2rem;
+      line-height: 1.2;
+      margin: 0 0 .6em;
+    }
+
+    p {
+      color: var(--doux);
+    }
+
+    .bloc-reservation {
+      margin-top: 40px;
+      padding-top: 32px;
+      border-top: 1px solid #e8e3dc;
+    }
+  </style>
+</head>
+
+<body>
+  <header>
+    <strong>Atelier Terre &amp; Feu</strong>
+  </header>
+
+  <main>
+    <h1>Apprendre le tour, à Paris 11<sup>e</sup></h1>
+
+    <p>
+      Nos ateliers accueillent huit personnes maximum, du grand débutant à celui
+      qui veut affiner son geste. Le matériel est fourni, les pièces sont cuites
+      et émaillées sur place.
+    </p>
+
+    <div class="bloc-reservation">
+
+      <!-- Les deux mêmes lignes que sur la page hostile. -->
+
+      <div id="daisy-booking" data-studio="std_pk_7f2a9c"></div>
+      <script src="http://localhost:5173/v1.js" async></script>
+
+    </div>
+  </main>
+</body>
+</html>

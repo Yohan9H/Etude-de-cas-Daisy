@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Réserver un atelier</title>
+
+  <!--
+    C'est la page du widget : celle qui s'affiche DANS l'iframe.
+
+    Elle est servie par Daisy (ici localhost:5173), donc sur une autre origine
+    que le site de l'artisan. Aucun CSS de l'artisan n'arrive jusqu'ici :
+    tout ce qui s'affiche est décidé dans ce document.
+
+    Le <title> est ce qu'annoncent les lecteurs d'écran en entrant dans l'iframe.
+  -->
+</head>
+
+<body>
+  <div id="app"></div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

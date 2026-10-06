@@ -1,0 +1,689 @@
+/* Styles de base du widget.
+ *
+ * On est dans l'iframe, donc dans notre propre document : aucun CSS de l'artisan
+ * n'arrive ici. Pas besoin de préfixer les classes, pas besoin de !important,
+ * pas besoin de réinitialiser quoi que ce soit de défensif.
+ *
+ * Écrit pour le téléphone d'abord : 60 % du trafic est mobile.
+ */
+
+/* --- Jetons ---------------------------------------------------------------- */
+
+:root {
+  /* Remplacée à l'exécution par branding.primary_color de l'API. */
+  --accent: #c4643a;
+  --accent-texte: #ffffff;
+
+  --texte: #2c2a27;
+  --texte-doux: #6b655d;
+
+  --surface: #ffffff;
+  --surface-douce: #f7f5f2;
+  --bord: #e5e0d8;
+
+  --erreur: #b3261e;
+
+  --rayon: 10px;
+  --espace: 16px;
+
+  /* 44px : taille minimale confortable pour le pouce. */
+  --cible: 44px;
+}
+
+/* --- Remise à zéro minimale ------------------------------------------------ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  /* Transparent en mode bouton : l'iframe se pose sur le fond du site de l'artisan. */
+  background: transparent;
+  color: var(--texte);
+
+  font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+
+  /* Empêche le zoom automatique de iOS sur les champs de formulaire. */
+  -webkit-text-size-adjust: 100%;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+}
+
+input,
+textarea,
+select {
+  font: inherit;
+
+  /* 16px minimum, sinon iOS zoome tout seul quand on entre dans le champ. */
+  font-size: 16px;
+}
+
+img {
+  max-width: 100%;
+  display: block;
+}
+
+/* --- Deux classes utilitaires ---------------------------------------------- */
+
+/* Anneau de focus visible : on ne le retire jamais, on le rend joli. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* --- Mode bouton (l'iframe fait 64px de haut) ------------------------------ */
+
+.entree {
+  height: 64px;
+  display: flex;
+  align-items: center;
+}
+
+/* --- Mode plein écran ------------------------------------------------------ */
+
+/* 100dvh et non 100vh : sur mobile, la barre d'adresse fait varier la hauteur
+ * visible, et 100vh déborde sous l'écran. */
+.tunnel {
+  /* height et non min-height : on veut une hauteur FIXE égale à l'écran, pour
+   * que seul le corps défile et que l'en-tête reste visible. Avec min-height,
+   * le tunnel grandissait avec son contenu (4993 px pour 40 cours) et
+   * l'en-tête partait vers le haut. */
+  height: 100dvh;
+  overflow: hidden;
+
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+}
+
+/* --- Le bouton d'entrée ---------------------------------------------------- */
+
+.bouton-principal {
+  width: 100%;
+  min-height: var(--cible);
+  padding: 0 20px;
+
+  border: 0;
+  border-radius: var(--rayon);
+
+  background: var(--accent);
+  color: var(--accent-texte);
+
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.bouton-principal:hover {
+  filter: brightness(0.93);
+}
+
+/* --- Le tunnel : en-tête fixe, corps qui défile ---------------------------- */
+
+.tunnel-entete {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--bord);
+  background: var(--surface);
+}
+
+.tunnel-titre {
+  flex: 1;
+  min-width: 0;
+
+  margin: 0;
+  font-weight: 600;
+
+  /* Un nom de cours peut être très long : une seule ligne, coupée proprement. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bouton-icone {
+  width: var(--cible);
+  height: var(--cible);
+  flex: 0 0 var(--cible);
+
+  border: 0;
+  border-radius: 50%;
+  background: var(--surface-douce);
+  color: var(--texte);
+
+  font-size: 17px;
+  line-height: 1;
+}
+
+.bouton-icone:hover {
+  background: var(--bord);
+}
+
+.tunnel-corps {
+  flex: 1;
+
+  /* C'est le corps qui défile, pas la page : l'en-tête reste visible. */
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* --- Les messages d'état --------------------------------------------------- */
+
+.message {
+  padding: 40px var(--espace);
+  text-align: center;
+}
+
+.message-titre {
+  margin: 0 0 6px;
+  font-weight: 600;
+}
+
+.message-detail {
+  margin: 0;
+  color: var(--texte-doux);
+  font-size: 15px;
+}
+
+.bouton-secondaire {
+  margin-top: 20px;
+  min-height: var(--cible);
+  padding: 0 24px;
+
+  border: 1px solid var(--accent);
+  border-radius: var(--rayon);
+  background: transparent;
+  color: var(--accent);
+
+  font-size: 15px;
+  font-weight: 500;
+}
+
+/* --- La liste des cours ---------------------------------------------------- */
+
+.liste {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: var(--espace);
+}
+
+.carte {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+
+  width: 100%;
+  padding: 10px;
+
+  border: 1px solid var(--bord);
+  border-radius: var(--rayon);
+  background: var(--surface);
+
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+
+.carte:hover {
+  border-color: var(--accent);
+  background: var(--surface-douce);
+}
+
+.carte-texte {
+  flex: 1;
+
+  /* Sans ça, un nom très long empêcherait le conteneur de rétrécir
+   * et déborderait de la carte. */
+  min-width: 0;
+}
+
+.carte-nom {
+  margin: 0;
+  font-weight: 600;
+  line-height: 1.3;
+
+  /* Deux lignes maximum, quelle que soit la longueur du nom. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.carte-meta {
+  margin: 3px 0 0;
+  color: var(--texte-doux);
+  font-size: 13px;
+}
+
+.carte-description {
+  margin: 6px 0 0;
+  color: var(--texte-doux);
+  font-size: 14px;
+  line-height: 1.4;
+
+  /* Une description de 800 caractères et une de 20 doivent donner
+   * des cartes de hauteur comparable. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.carte-prix {
+  margin: 8px 0 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* --- La vignette ----------------------------------------------------------- */
+
+.vignette {
+  position: relative;
+  flex: 0 0 auto;
+
+  width: 64px;
+  height: 64px;
+
+  border-radius: 8px;
+  overflow: hidden;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.vignette-lettre {
+  font-size: 24px;
+  font-weight: 600;
+  color: rgb(0 0 0 / 0.35);
+}
+
+/* L'image recouvre la lettre quand elle charge. Si elle échoue,
+ * le JavaScript la retire et la lettre réapparaît. */
+.vignette-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* --- Largeur de lecture ---------------------------------------------------- */
+
+/* En plein écran sur un ordinateur, l'iframe fait toute la fenêtre. Sans
+ * limite, une carte s'étalerait sur 1500 px et deviendrait illisible.
+ * Sur téléphone, la largeur disponible est inférieure : la règle ne fait rien. */
+.bande {
+  width: 100%;
+  max-width: 560px;
+  margin-inline: auto;
+}
+
+.tunnel-entete {
+  padding: 0;
+}
+
+.tunnel-entete > .bande {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+}
+
+/* --- Les créneaux ---------------------------------------------------------- */
+
+.creneau {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+
+  width: 100%;
+  min-height: var(--cible);
+  padding: 12px 14px;
+
+  border: 1px solid var(--bord);
+  border-radius: var(--rayon);
+  background: var(--surface);
+
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+
+.creneau:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--surface-douce);
+}
+
+/* Un créneau complet reste visible : il prouve que le cours a bien des dates.
+ * Mais il ne doit pas avoir l'air cliquable. */
+.creneau:disabled {
+  background: var(--surface-douce);
+  color: var(--texte-doux);
+  cursor: not-allowed;
+}
+
+.creneau-quand {
+  min-width: 0;
+}
+
+.creneau-jour {
+  margin: 0;
+  font-weight: 600;
+
+}
+
+/* Intl renvoie « samedi 17 octobre », tout en minuscules. On ne met une
+ * majuscule qu'à la première lettre : `capitalize` en mettrait une à chaque
+ * mot et donnerait « Samedi 17 Octobre », ce qui n'est pas du français. */
+.creneau-jour::first-letter {
+  text-transform: uppercase;
+}
+
+.creneau-heure {
+  margin: 2px 0 0;
+  color: var(--texte-doux);
+  font-size: 14px;
+}
+
+.creneau-etat {
+  flex: 0 0 auto;
+  text-align: right;
+}
+
+.creneau-prix {
+  margin: 0;
+  font-weight: 600;
+}
+
+.creneau-rare {
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: var(--erreur);
+}
+
+.creneau-complet {
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: var(--texte-doux);
+}
+
+/* --- Le formulaire --------------------------------------------------------- */
+
+.formulaire {
+  padding: var(--espace);
+}
+
+/* --- Le récapitulatif ------------------------------------------------------ */
+
+.recap {
+  padding: 14px;
+  margin-bottom: 20px;
+
+  border-radius: var(--rayon);
+  background: var(--surface-douce);
+}
+
+.recap-cours {
+  margin: 0;
+  font-weight: 600;
+}
+
+.recap-quand {
+  margin: 4px 0 0;
+  color: var(--texte-doux);
+  font-size: 14px;
+}
+
+.recap-quand::first-letter {
+  text-transform: uppercase;
+}
+
+.recap-prix {
+  margin: 8px 0 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.recap-annulation {
+  margin: 10px 0 0;
+  color: var(--texte-doux);
+  font-size: 13px;
+}
+
+/* --- Les champs ------------------------------------------------------------ */
+
+.champ {
+  margin-bottom: 16px;
+}
+
+.champ-libelle {
+  display: block;
+  margin-bottom: 5px;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.champ-saisie {
+  width: 100%;
+  min-height: var(--cible);
+  padding: 10px 12px;
+
+  border: 1px solid var(--bord);
+  border-radius: var(--rayon);
+  background: var(--surface);
+  color: var(--texte);
+
+  /* 16px minimum, sinon iOS zoome en entrant dans le champ. */
+  font-size: 16px;
+  font-family: inherit;
+}
+
+.champ-saisie:focus {
+  border-color: var(--accent);
+}
+
+/* La couleur ne suffit pas : certains ne la distinguent pas. L'épaisseur du
+ * trait et le message sous le champ portent l'information eux aussi. */
+.champ-saisie[aria-invalid='true'] {
+  border-color: var(--erreur);
+  border-width: 2px;
+}
+
+.champ-aide,
+.champ-erreur {
+  margin: 5px 0 0;
+  font-size: 13px;
+}
+
+.champ-aide {
+  color: var(--texte-doux);
+}
+
+.champ-erreur {
+  color: var(--erreur);
+  font-weight: 500;
+}
+
+.bouton-envoi {
+  margin-top: 8px;
+  min-height: 50px;
+  font-size: 17px;
+}
+
+/* --- Bandeau d'erreur générale --------------------------------------------- */
+
+.bandeau-erreur {
+  margin: 0 0 18px;
+  padding: 12px 14px;
+
+  border: 1px solid var(--erreur);
+  border-radius: var(--rayon);
+
+  color: var(--erreur);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+/* --- L'attente pendant l'envoi --------------------------------------------- */
+
+.attente {
+  padding: 56px var(--espace);
+  text-align: center;
+}
+
+.rotateur {
+  width: 34px;
+  height: 34px;
+  margin: 0 auto 20px;
+
+  border: 3px solid var(--bord);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+
+  animation: tourner 0.9s linear infinite;
+}
+
+@keyframes tourner {
+  to { transform: rotate(360deg); }
+}
+
+/* Respecte le réglage système « réduire les animations ». */
+@media (prefers-reduced-motion: reduce) {
+  .rotateur { animation-duration: 3s; }
+}
+
+.attente-titre {
+  margin: 0 0 8px;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.attente-detail {
+  margin: 0;
+  color: var(--texte-doux);
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.attente-recap {
+  margin: 24px 0 0;
+  color: var(--texte-doux);
+  font-size: 13px;
+}
+
+/* --- La confirmation -------------------------------------------------------- */
+
+.confirmation {
+  padding: 48px var(--espace) var(--espace);
+  text-align: center;
+}
+
+.confirmation-pastille {
+  width: 52px;
+  height: 52px;
+  margin: 0 auto 18px;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-texte);
+
+  font-size: 26px;
+}
+
+.confirmation-titre {
+  margin: 0 0 8px;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.confirmation-detail {
+  margin: 0 0 24px;
+  color: var(--texte-doux);
+  font-size: 15px;
+}
+
+.confirmation-code {
+  margin: 4px 0 10px;
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+
+/* --- Le refus ---------------------------------------------------------------- */
+
+.refus {
+  padding: 32px var(--espace) var(--espace);
+}
+
+.refus-titre {
+  margin: 0 0 10px;
+  font-size: 19px;
+  font-weight: 600;
+}
+
+.refus-detail {
+  margin: 0 0 24px;
+  color: var(--texte-doux);
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.refus-sous-titre {
+  margin: 28px 0 10px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.refus .liste {
+  padding: 0;
+}
+
+.refus .bouton-secondaire {
+  width: 100%;
+  margin-top: 20px;
+}
+
+/* Détail du calcul, visible seulement à partir de deux places. */
+.recap-detail-prix {
+  margin: 2px 0 0;
+  color: var(--texte-doux);
+  font-size: 13px;
+}
+
+/* --- Le logo de l'atelier -------------------------------------------------- */
+
+.logo {
+  flex: 0 0 auto;
+
+  width: 28px;
+  height: 28px;
+
+  border-radius: 6px;
+  object-fit: contain;
+}
+
+.logo-confirmation {
+  width: 44px;
+  height: 44px;
+  margin: 0 auto 14px;
+  display: block;
+}

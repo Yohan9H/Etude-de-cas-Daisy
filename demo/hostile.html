@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Atelier Terre &amp; Feu — site hostile</title>
+
+  <!--
+    PAGE DE DÉMONSTRATION N° 1 : le pire site possible.
+
+    Le CSS ci-dessous est volontairement agressif. Il reproduit ce que décrit
+    daisy-api.md : des styles globaux sur button, input et div, avec des !important.
+
+    Cette page contient aussi trois pièges, dans l'ordre où ils cassent les choses :
+
+      1. .cadre-anime porte un transform.
+         -> un position:fixed à l'intérieur n'est PLUS relatif à la fenêtre.
+
+      2. .barre-collante a un z-index de 999999.
+         -> impossible de gagner cette bataille avec un z-index arbitraire.
+
+      Un seul mécanisme règle les deux : <dialog> + showModal() place l'élément
+      dans la top layer, au-dessus de tout ET avec la zone visible pour repère,
+      quel que soit son parent. L'iframe n'a donc jamais besoin d'être déplacée
+      — ce qui tombe bien, puisque la déplacer la rechargerait.
+
+      3. .colonne fait 320px.
+         -> le widget doit tenir dans une colonne étroite.
+
+    Si le widget survit à cette page, il survivra à Wix.
+  -->
+
+  <style>
+    /* --- Le CSS hostile ------------------------------------------------------- */
+
+    * {
+      font-family: "Comic Sans MS", "Chalkboard SE", cursive !important;
+      box-sizing: content-box !important;
+    }
+
+    div {
+      line-height: 3 !important;
+    }
+
+    button,
+    input,
+    select,
+    textarea {
+      background: #cc0000 !important;
+      color: #ffff00 !important;
+      border: 4px dashed #00ff00 !important;
+      border-radius: 0 !important;
+      font-size: 22px !important;
+      padding: 18px !important;
+      text-transform: uppercase !important;
+    }
+
+    a {
+      color: #ff00ff !important;
+      text-decoration: underline wavy !important;
+    }
+
+    /* --- La structure de la page ---------------------------------------------- */
+
+    body {
+      margin: 0;
+      background: #fffbe6;
+      color: #333;
+    }
+
+    .barre-collante {
+      position: sticky;
+      top: 0;
+      z-index: 999999;                    /* piège n° 2 */
+      background: #222;
+      color: #fff;
+      padding: 12px 20px;
+    }
+
+    .contenu {
+      display: flex;
+      gap: 32px;
+      padding: 24px 20px;
+      align-items: flex-start;
+    }
+
+    .principal {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .cadre-anime {
+      transform: translateZ(0);           /* piège n° 1 */
+      will-change: transform;
+    }
+
+    .colonne {
+      width: 320px;                       /* piège n° 3 */
+      flex: 0 0 320px;
+      background: #fff;
+      border: 3px solid #cc0000;
+      padding: 12px;
+    }
+
+    @media (max-width: 720px) {
+      .contenu { flex-direction: column; }
+      .colonne { width: auto; flex: 1 1 auto; }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="barre-collante">
+    Atelier Terre &amp; Feu — barre collante avec un z-index de 999999
+  </div>
+
+  <div class="contenu">
+    <div class="principal">
+      <h1>Nos ateliers de céramique</h1>
+
+      <p>
+        Cette page est volontairement hostile. Elle sert à vérifier que le widget
+        s'affiche correctement quand le site qui l'accueille fait tout pour l'en empêcher.
+      </p>
+
+      <p>
+        <button>Un bouton de la page hôte</button>
+      </p>
+
+      <p>
+        <input type="text" placeholder="Un champ de la page hôte">
+      </p>
+    </div>
+
+    <!-- Le widget est dans une colonne de 320px, elle-même dans un conteneur animé. -->
+    <div class="colonne">
+      <h2>Réserver</h2>
+
+      <div class="cadre-anime">
+
+        <!-- ================================================================ -->
+        <!-- Les deux lignes que l'artisan copie-colle. Rien de plus.         -->
+        <!-- ================================================================ -->
+
+        <div id="daisy-booking" data-studio="std_pk_7f2a9c"></div>
+        <script src="http://localhost:5173/v1.js" async></script>
+
+        <!-- ================================================================ -->
+
+      </div>
+    </div>
+  </div>
+</body>
+</html>
