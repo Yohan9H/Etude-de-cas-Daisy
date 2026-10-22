@@ -11,20 +11,20 @@ import './style.css'
 import { getStudio, getCourses, getSlots, postBooking } from './api'
 import type { Studio, Course, Slot, Erreur as ErreurApi } from './api'
 import { envoyer, ecouter, estDansUneIframe } from './pont'
-import { creerTunnel, texteDErreur } from './tunnel'
+import { creerTunnel, FENETRE_JOURS } from './tunnel'
 import type { Tunnel } from './tunnel'
 import { hoteAutonome, hoteIframe } from './hote'
 
 // --- L'état ------------------------------------------------------------------
 
-// Le tunnel décide s'il est ouvert et porte la liste des cours. Les écrans
-// qui suivent ne l'ont pas encore rejoint : tant que le tunnel est ouvert,
-// c'est cet écran-ci qu'on affiche, et 'cours' rend la liste du tunnel.
+// Le tunnel décide s'il est ouvert et porte les écrans des cours et des
+// créneaux. Les écrans qui suivent ne l'ont pas encore rejoint : quand l'un
+// d'eux est affiché, il est noté ici et passe devant l'écran du tunnel, qui
+// reste sur les créneaux du cours. Ce type disparaît quand l'envoi et les
+// refus auront rejoint le tunnel (tickets 03 à 05).
 let tunnel: Tunnel
 
 type Ecran =
-  | { nom: 'cours' }
-  | { nom: 'creneaux'; cours: Course }
   | { nom: 'coordonnees'; cours: Course; creneau: Slot }
   | { nom: 'envoi'; cours: Course; creneau: Slot }
   | { nom: 'confirme'; creneau: Slot; code: string; total: number }
@@ -42,10 +42,10 @@ type Saisie = {
 }
 
 type Etat = {
-  ecran: Ecran
+  // null : on affiche l'écran du tunnel.
+  ecran: Ecran | null
 
   studio: Studio | null
-  creneaux: Slot[]
 
   // Conservée hors des écrans : quand le refus arrivera, l'utilisateur ne
   // devra pas avoir à ressaisir ce qu'il vient de taper.
@@ -66,17 +66,12 @@ type Etat = {
   // Verrou. La création met 1,5 à 4 s : sans lui, un double-clic crée
   // deux réservations.
   envoiEnCours: boolean
-
-  // Chargement des créneaux. Celui des cours appartient au tunnel.
-  chargement: boolean
-  erreur: string | null
 }
 
 const etat: Etat = {
-  ecran: { nom: 'cours' },
+  ecran: null,
 
   studio: null,
-  creneaux: [],
 
   saisie: { first_name: '', last_name: '', email: '', phone: '', notes: '' },
   erreurs: {},
@@ -84,17 +79,9 @@ const etat: Etat = {
   telephoneExige: false,
   places: 1,
   envoiEnCours: false,
-
-  chargement: false,
-  erreur: null,
 }
 
 const racine = document.getElementById('app')!
-
-// La spec plafonne la fenêtre à 90 jours, au-delà c'est un 400.
-// On demande le maximum : certains ateliers ne proposent qu'une date par mois,
-// et une fenêtre plus courte renverrait parfois une liste vide à tort.
-const FENETRE_JOURS = 90
 
 // En dessous de ce nombre, on affiche les places restantes. Au-dessus on se
 // tait : « 8 places restantes » est du bruit, et un décompte affiché partout
@@ -313,15 +300,7 @@ function carteCours(cours: Course): HTMLElement {
 
   carte.appendChild(texte)
 
-  carte.addEventListener('click', () => {
-    etat.ecran = { nom: 'creneaux', cours }
-
-    // On repart de zéro : les créneaux affichés étaient ceux d'un autre cours.
-    etat.creneaux = []
-
-    dessiner()
-    chargerCreneaux(cours)
-  })
+  carte.addEventListener('click', () => tunnel.choisirCours(cours))
 
   return carte
 }
@@ -663,30 +642,26 @@ function ecranCours(): HTMLElement {
 function ecranCreneaux(cours: Course): HTMLElement {
   const zone = creer('div', 'tunnel')
 
-  zone.appendChild(
-    enteteTunnel(cours.name, () => {
-      etat.ecran = { nom: 'cours' }
-      dessiner()
-    }),
-  )
+  zone.appendChild(enteteTunnel(cours.name, () => tunnel.revenir()))
 
   const corps = creer('div', 'tunnel-corps')
+  const creneaux = tunnel.etat.creneaux
 
-  if (etat.chargement) {
+  if (creneaux === null || creneaux.etat === 'en-chargement') {
     corps.appendChild(messageCentral('Chargement…', 'Nous récupérons les prochaines dates.'))
     zone.appendChild(corps)
     return zone
   }
 
-  if (etat.erreur) {
+  if (creneaux.etat === 'en-erreur') {
     corps.appendChild(
-      messageCentral('Impossible d’afficher les dates', etat.erreur, () => chargerCreneaux(cours)),
+      messageCentral('Impossible d’afficher les dates', creneaux.message, () => tunnel.reessayer()),
     )
     zone.appendChild(corps)
     return zone
   }
 
-  if (etat.creneaux.length === 0) {
+  if (creneaux.liste.length === 0) {
     corps.appendChild(
       messageCentral(
         'Aucune date programmée',
@@ -699,7 +674,7 @@ function ecranCreneaux(cours: Course): HTMLElement {
 
   const liste = creer('div', 'liste bande')
 
-  for (const creneau of etat.creneaux) {
+  for (const creneau of creneaux.liste) {
     liste.appendChild(
       ligneCreneau(creneau, (choisi) => {
         // Le créneau précédent permettait peut-être plus de places que
@@ -722,8 +697,9 @@ function ecranCoordonnees(cours: Course, creneau: Slot): HTMLElement {
   const zone = creer('div', 'tunnel')
 
   zone.appendChild(
+    // Le tunnel est resté sur les créneaux de ce cours.
     enteteTunnel('Vos coordonnées', () => {
-      etat.ecran = { nom: 'creneaux', cours }
+      etat.ecran = null
       etat.erreurs = {}
       etat.erreurEnvoi = null
       dessiner()
@@ -922,7 +898,8 @@ function ecranPlacePartie(cours: Course, creneau: Slot, restantes: number): HTML
     )
   }
 
-  const autres = etat.creneaux.filter(
+  const creneaux = tunnel.etat.creneaux
+  const autres = (creneaux?.etat === 'prete' ? creneaux.liste : []).filter(
     (autre) => autre.slot_id !== creneau.slot_id && autre.seats_available > 0,
   )
 
@@ -949,7 +926,7 @@ function ecranPlacePartie(cours: Course, creneau: Slot, restantes: number): HTML
 
   const toutes = creer('button', 'bouton-secondaire', 'Voir toutes les dates')
   toutes.addEventListener('click', () => {
-    etat.ecran = { nom: 'creneaux', cours }
+    etat.ecran = null
     dessiner()
   })
   bande.appendChild(toutes)
@@ -981,7 +958,7 @@ function ecranCreneauAnnule(cours: Course): HTMLElement {
 
   const toutes = creer('button', 'bouton-principal', 'Choisir une autre date')
   toutes.addEventListener('click', () => {
-    etat.ecran = { nom: 'creneaux', cours }
+    etat.ecran = null
     dessiner()
   })
   bande.appendChild(toutes)
@@ -1002,13 +979,13 @@ function dessiner(): void {
     return
   }
 
-  if (etat.ecran.nom === 'cours') {
-    racine.appendChild(ecranCours())
-    return
-  }
+  if (etat.ecran === null) {
+    if (tunnel.etat.ecran.nom === 'creneaux') {
+      racine.appendChild(ecranCreneaux(tunnel.etat.ecran.cours))
+      return
+    }
 
-  if (etat.ecran.nom === 'creneaux') {
-    racine.appendChild(ecranCreneaux(etat.ecran.cours))
+    racine.appendChild(ecranCours())
     return
   }
 
@@ -1195,23 +1172,13 @@ function traiterEchec(cours: Course, creneau: Slot, erreur: ErreurApi): void {
 }
 
 // Recharge les créneaux sans changer d'écran : sert à proposer des dates
-// encore valables après un refus.
-async function rafraichirCreneaux(cours: Course): Promise<void> {
-  const aujourdhui = new Date()
-  const fin = new Date(aujourdhui)
-  fin.setDate(fin.getDate() + FENETRE_JOURS)
-
-  const resultat = await getSlots(cours.course_id, aujourdhui, fin)
-
-  if (!resultat.ok) return
-
-  const maintenant = Date.now()
-
-  etat.creneaux = resultat.donnees.slots
-    .filter((creneau) => new Date(creneau.starts_at).getTime() > maintenant)
-    .sort((a, b) => a.starts_at.localeCompare(b.starts_at))
-
-  dessiner()
+// encore valables après un refus. On passe par `choisirCours`, qui remet
+// aussi l'écran du tunnel sur les créneaux du cours et la liste en
+// chargement : sans effet visible, l'écran du refus passe devant. Les
+// alternatives restent vides jusqu'à la réponse, plutôt que périmées.
+// Transitoire : le rechargement après un refus rejoint le tunnel au ticket 05.
+function rafraichirCreneaux(cours: Course): void {
+  tunnel.choisirCours(cours)
 }
 
 // --- Navigation --------------------------------------------------------------
@@ -1219,40 +1186,9 @@ async function rafraichirCreneaux(cours: Course): Promise<void> {
 function ouvrirTunnel(): void {
   // On repart toujours de la liste des cours, jamais d'un créneau resté
   // affiché d'une ouverture précédente.
-  etat.ecran = { nom: 'cours' }
+  etat.ecran = null
 
   tunnel.ouvrir()
-}
-
-// --- Chargement des données --------------------------------------------------
-
-async function chargerCreneaux(cours: Course): Promise<void> {
-  etat.chargement = true
-  etat.erreur = null
-  dessiner()
-
-  const aujourdhui = new Date()
-  const fin = new Date(aujourdhui)
-  fin.setDate(fin.getDate() + FENETRE_JOURS)
-
-  const resultat = await getSlots(cours.course_id, aujourdhui, fin)
-
-  etat.chargement = false
-
-  if (!resultat.ok) {
-    etat.erreur = texteDErreur(resultat.erreur.statut, resultat.erreur.code)
-    dessiner()
-    return
-  }
-
-  // L'API peut renvoyer des créneaux déjà passés : on ne les propose pas.
-  const maintenant = Date.now()
-
-  etat.creneaux = resultat.donnees.slots
-    .filter((creneau) => new Date(creneau.starts_at).getTime() > maintenant)
-    .sort((a, b) => a.starts_at.localeCompare(b.starts_at))
-
-  dessiner()
 }
 
 // --- Couleurs : contraste et lisibilité ---------------------------------------
@@ -1335,7 +1271,7 @@ async function demarrer(): Promise<void> {
 
   tunnel = creerTunnel({
     atelier: resultat.donnees,
-    api: { getCourses },
+    api: { getCourses, getSlots },
     hote,
     horloge: () => new Date(),
   })
@@ -1356,7 +1292,7 @@ async function demarrer(): Promise<void> {
 
     // Pendant l'envoi, fermer ne servirait à rien : la requête est partie et
     // la réservation sera créée. Mieux vaut laisser l'attente se terminer.
-    if (etat.ecran.nom === 'envoi') return
+    if (etat.ecran?.nom === 'envoi') return
 
     tunnel.fermer()
   })

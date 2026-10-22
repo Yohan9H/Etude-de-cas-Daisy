@@ -5,12 +5,13 @@
 // l'hôte et l'horloge lui sont donnés à la création. C'est ce qui permet de
 // le tester sans navigateur, sans serveur et sans dépendre de la date du jour.
 
-import type { Course, Resultat, Studio } from './api'
+import type { Course, Resultat, Slot, Studio } from './api'
 
 // --- Les dépendances ---------------------------------------------------------
 
 export type ApiTunnel = {
   getCourses(): Promise<Resultat<{ courses: Course[] }>>
+  getSlots(idCours: string, depuis: Date, jusqua: Date): Promise<Resultat<{ slots: Slot[] }>>
 }
 
 // La page qui nous héberge. Elle seule sait ouvrir et fermer le tunnel ; on
@@ -24,10 +25,11 @@ export type Horloge = () => Date
 
 // --- L'état ------------------------------------------------------------------
 
-export type Ecran = { nom: 'bouton' } | { nom: 'cours' }
+export type Ecran = { nom: 'bouton' } | { nom: 'cours' } | { nom: 'creneaux'; cours: Course }
 
-// Un chargement a son propre état, à côté de l'écran : la liste des cours ne
-// partage le sien avec aucune autre liste.
+// Un chargement a son propre état, à côté de l'écran : la liste des cours et
+// celle des créneaux ne partagent pas le leur. Sinon le « Chargement… » des
+// créneaux s'affiche sur la liste des cours quand on y revient.
 export type Chargement<T> =
   | { etat: 'en-chargement' }
   | { etat: 'prete'; liste: T[] }
@@ -38,7 +40,17 @@ export type EtatTunnel = {
 
   // null tant que le tunnel n'a jamais été ouvert.
   cours: Chargement<Course> | null
+
+  // Les créneaux du dernier cours choisi. null tant qu'aucun cours ne l'a été.
+  creneaux: Chargement<Slot> | null
 }
+
+// La spec plafonne la fenêtre à 90 jours, au-delà c'est un 400.
+// On demande le maximum : certains ateliers ne proposent qu'une date par mois,
+// et une fenêtre plus courte renverrait parfois une liste vide à tort.
+export const FENETRE_JOURS = 90
+
+const UN_JOUR_MS = 24 * 60 * 60 * 1000
 
 // --- Le tunnel ---------------------------------------------------------------
 
@@ -48,10 +60,15 @@ export function creerTunnel(dependances: {
   hote: Hote
   horloge: Horloge
 }) {
-  const { api, hote } = dependances
+  const { api, hote, horloge } = dependances
 
-  let etat: EtatTunnel = { ecran: { nom: 'bouton' }, cours: null }
+  let etat: EtatTunnel = { ecran: { nom: 'bouton' }, cours: null, creneaux: null }
   const abonnes = new Set<() => void>()
+
+  // Numéro de la dernière demande de créneaux. Une réponse qui ne porte pas
+  // ce numéro est périmée : la personne a choisi un autre cours entre-temps,
+  // et ses créneaux ne doivent pas écraser ceux qu'elle regarde.
+  let derniereDemandeCreneaux = 0
 
   function changer(modification: Partial<EtatTunnel>): void {
     etat = { ...etat, ...modification }
@@ -70,6 +87,34 @@ export function creerTunnel(dependances: {
     }
 
     changer({ cours: { etat: 'prete', liste: resultat.donnees.courses } })
+  }
+
+  // Même contrat que `chargerCours` : la liste est déjà en chargement.
+  async function chargerCreneaux(cours: Course): Promise<void> {
+    const depuis = horloge()
+    const jusqua = new Date(depuis.getTime() + FENETRE_JOURS * UN_JOUR_MS)
+
+    const demande = ++derniereDemandeCreneaux
+    const resultat = await api.getSlots(cours.course_id, depuis, jusqua)
+
+    if (demande !== derniereDemandeCreneaux) return
+
+    if (!resultat.ok) {
+      const message = texteDErreur(resultat.erreur.statut, resultat.erreur.code)
+      changer({ creneaux: { etat: 'en-erreur', message } })
+      return
+    }
+
+    changer({ creneaux: { etat: 'prete', liste: creneauxAVenir(resultat.donnees.slots) } })
+  }
+
+  // L'API peut renvoyer des créneaux déjà passés : on ne les propose pas.
+  function creneauxAVenir(creneaux: Slot[]): Slot[] {
+    const maintenant = horloge().getTime()
+
+    return creneaux
+      .filter((creneau) => new Date(creneau.starts_at).getTime() > maintenant)
+      .sort((a, b) => a.starts_at.localeCompare(b.starts_at))
   }
 
   return {
@@ -107,11 +152,31 @@ export function creerTunnel(dependances: {
       hote.demanderFermeture()
     },
 
+    choisirCours(cours: Course): void {
+      changer({ ecran: { nom: 'creneaux', cours }, creneaux: { etat: 'en-chargement' } })
+      chargerCreneaux(cours)
+    },
+
+    revenir(): void {
+      if (etat.ecran.nom !== 'creneaux') return
+
+      changer({ ecran: { nom: 'cours' } })
+    },
+
     hoteAFerme(): void {
       changer({ ecran: { nom: 'bouton' } })
     },
 
+    // On réessaie la liste affichée, pas une autre restée en erreur derrière.
     reessayer(): void {
+      if (etat.ecran.nom === 'creneaux') {
+        if (etat.creneaux?.etat !== 'en-erreur') return
+
+        changer({ creneaux: { etat: 'en-chargement' } })
+        chargerCreneaux(etat.ecran.cours)
+        return
+      }
+
       if (etat.cours?.etat !== 'en-erreur') return
 
       changer({ cours: { etat: 'en-chargement' } })
@@ -126,9 +191,7 @@ export type Tunnel = ReturnType<typeof creerTunnel>
 
 // Un message par cause, jamais un code technique : « erreur 403 » ne veut rien
 // dire pour quelqu'un qui veut réserver un cours de poterie.
-//
-// Exporté le temps que le chargement des créneaux rejoigne le tunnel.
-export function texteDErreur(statut: number | null, code: string): string {
+function texteDErreur(statut: number | null, code: string): string {
   if (statut === null) {
     return 'Vérifiez votre connexion internet, puis réessayez.'
   }
