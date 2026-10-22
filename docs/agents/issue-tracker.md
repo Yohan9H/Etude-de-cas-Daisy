@@ -10,6 +10,15 @@ Les issues et les specs de ce repo sont des fichiers markdown dans `.scratch/`.
 - L'état de triage est noté sur une ligne `Status:` en haut de chaque fichier d'issue (voir `triage-labels.md` pour les libellés)
 - Les commentaires et l'historique des échanges s'ajoutent en bas du fichier, sous un titre `## Comments`
 
+## Quand un ticket d'implémentation est livré
+
+À la fin de `/implement`, une fois le travail commité :
+
+- passer `Status: resolved` ;
+- ajouter en bas du fichier un titre `## Answer` avec le hash du commit et les écarts au ticket (décision prise en route, comportement modifié, point laissé à un ticket suivant) ; « Aucun écart » s'il n'y en a pas.
+
+Un `Blocked by:` est levé quand tous les tickets listés sont `resolved`.
+
 ## Quand un skill dit « publish to the issue tracker »
 
 Créer un nouveau fichier sous `.scratch/<feature-slug>/` (en créant le dossier si besoin).

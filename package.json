@@ -9,7 +9,10 @@
     "host": "node mock/serve-demo.mjs",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "check": "tsc --noEmit && vitest run",
+    "demo": "npm run api & npm run host & npm run dev",
+    "prepare": "git config core.hooksPath .githooks"
   },
   "devDependencies": {
     "typescript": "^5.6.0",

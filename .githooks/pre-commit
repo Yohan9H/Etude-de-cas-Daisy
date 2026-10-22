@@ -1,0 +1,4 @@
+#!/bin/sh
+# Typecheck et tests avant chaque commit. Activé par `npm install` (script
+# `prepare`, qui pointe core.hooksPath vers ce dossier).
+exec npm run --silent check

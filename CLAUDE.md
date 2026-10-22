@@ -12,6 +12,10 @@ Les cinq rôles canoniques par défaut (`needs-triage`, `needs-info`, `ready-for
 
 Single-context : `GLOSSARY.md` et `docs/adr/` à la racine. Voir `docs/agents/domain.md`.
 
+### Vérification dans la démo
+
+Lancer la démo, ou cocher « Vérifié à la main dans la démo » : voir `docs/agents/verification-demo.md`.
+
 ## Langue
 
 Rédige en français tout ce qui est produit dans ce repo (GLOSSARY.md, ADR, specs, tickets, rapports).

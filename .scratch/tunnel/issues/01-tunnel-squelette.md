@@ -1,6 +1,6 @@
 # 01 : Tunnel squelette : ouvrir, fermer, liste des cours
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: None (can start immediately)
 Spec : `.scratch/tunnel/spec.md`
 
@@ -18,3 +18,15 @@ Ce ticket pose le seam pour tous les suivants : le tunnel est créé avec l'atel
 - [x] Les tests passent par l'interface du tunnel avec une fausse API, un faux hôte et une horloge fixe
 - [x] Les champs de l'ancien état global remplacés par le tunnel sont supprimés
 - [x] Vérifié à la main dans la démo (site hostile et site sobre) : ouvrir, voir les cours, fermer de chaque façon
+
+## Answer
+
+Livré dans `1fa5a06`.
+
+Écarts au ticket :
+
+- La liste des cours n'est chargée qu'à la première ouverture, même après une erreur ou une liste vide : à la réouverture, l'erreur reste affichée jusqu'à « Réessayer ». L'ancien code rechargeait tant que la liste était vide. Confirmé par l'utilisateur.
+- L'adapter iframe n'écoute pas lui-même l'écho `closed` : `demarrer` le branche sur `hoteAFerme`, conformément à « Le démarrage (…) reste hors du tunnel ».
+- `main.ts` garde son propre type `Ecran` pour les écrans pas encore portés ; `ouvrirTunnel` le remet à `cours` avant `tunnel.ouvrir()`. La garde d'Échap pendant l'envoi lit encore cet écran, en attendant que l'envoi rejoigne le tunnel.
+- `texteDErreur` vit dans `tunnel.ts` et reste exporté pour le chargement des créneaux, jusqu'au ticket 02.
+- Effet de bord : la liste des cours ne partage plus `chargement`/`erreur` avec les créneaux. Le bug du « Chargement… » sur la mauvaise liste disparaît côté cours, sans test dédié (relève du ticket 02).
