@@ -11,11 +11,18 @@ import './style.css'
 import { getStudio, getCourses, getSlots, postBooking } from './api'
 import type { Studio, Course, Slot, Erreur as ErreurApi } from './api'
 import { envoyer, ecouter, estDansUneIframe } from './pont'
+import { creerTunnel, texteDErreur } from './tunnel'
+import type { Tunnel } from './tunnel'
+import { hoteAutonome, hoteIframe } from './hote'
 
 // --- L'état ------------------------------------------------------------------
 
+// Le tunnel décide s'il est ouvert et porte la liste des cours. Les écrans
+// qui suivent ne l'ont pas encore rejoint : tant que le tunnel est ouvert,
+// c'est cet écran-ci qu'on affiche, et 'cours' rend la liste du tunnel.
+let tunnel: Tunnel
+
 type Ecran =
-  | { nom: 'bouton' }
   | { nom: 'cours' }
   | { nom: 'creneaux'; cours: Course }
   | { nom: 'coordonnees'; cours: Course; creneau: Slot }
@@ -38,7 +45,6 @@ type Etat = {
   ecran: Ecran
 
   studio: Studio | null
-  cours: Course[]
   creneaux: Slot[]
 
   // Conservée hors des écrans : quand le refus arrivera, l'utilisateur ne
@@ -61,15 +67,15 @@ type Etat = {
   // deux réservations.
   envoiEnCours: boolean
 
+  // Chargement des créneaux. Celui des cours appartient au tunnel.
   chargement: boolean
   erreur: string | null
 }
 
 const etat: Etat = {
-  ecran: { nom: 'bouton' },
+  ecran: { nom: 'cours' },
 
   studio: null,
-  cours: [],
   creneaux: [],
 
   saisie: { first_name: '', last_name: '', email: '', phone: '', notes: '' },
@@ -229,7 +235,7 @@ function enteteTunnel(titre: string, retour?: () => void): HTMLElement {
 
   const fermer = creer('button', 'bouton-icone', '✕')
   fermer.setAttribute('aria-label', 'Fermer')
-  fermer.addEventListener('click', fermerTunnel)
+  fermer.addEventListener('click', () => tunnel.fermer())
   entete.appendChild(fermer)
 
   return barre
@@ -615,20 +621,23 @@ function ecranCours(): HTMLElement {
   zone.appendChild(enteteTunnel(etat.studio?.name ?? 'Réserver'))
 
   const corps = creer('div', 'tunnel-corps')
+  const cours = tunnel.etat.cours
 
-  if (etat.chargement) {
+  if (cours === null || cours.etat === 'en-chargement') {
     corps.appendChild(messageCentral('Chargement…', 'Nous récupérons les ateliers proposés.'))
     zone.appendChild(corps)
     return zone
   }
 
-  if (etat.erreur) {
-    corps.appendChild(messageCentral('Impossible d’afficher les ateliers', etat.erreur, chargerCours))
+  if (cours.etat === 'en-erreur') {
+    corps.appendChild(
+      messageCentral('Impossible d’afficher les ateliers', cours.message, () => tunnel.reessayer()),
+    )
     zone.appendChild(corps)
     return zone
   }
 
-  if (etat.cours.length === 0) {
+  if (cours.liste.length === 0) {
     corps.appendChild(
       messageCentral(
         'Aucun atelier pour le moment',
@@ -641,8 +650,8 @@ function ecranCours(): HTMLElement {
 
   const liste = creer('div', 'liste bande')
 
-  for (const cours of etat.cours) {
-    liste.appendChild(carteCours(cours))
+  for (const unCours of cours.liste) {
+    liste.appendChild(carteCours(unCours))
   }
 
   corps.appendChild(liste)
@@ -845,7 +854,7 @@ function ecranConfirme(creneau: Slot, code: string, total: number): HTMLElement 
     etat.erreurs = {}
     etat.erreurEnvoi = null
 
-    fermerTunnel()
+    tunnel.fermer()
   })
   bande.appendChild(fermer)
 
@@ -988,7 +997,7 @@ function ecranCreneauAnnule(cours: Course): HTMLElement {
 function dessiner(): void {
   vider(racine)
 
-  if (etat.ecran.nom === 'bouton') {
+  if (tunnel.etat.ecran.nom === 'bouton') {
     racine.appendChild(ecranBouton())
     return
   }
@@ -1208,49 +1217,14 @@ async function rafraichirCreneaux(cours: Course): Promise<void> {
 // --- Navigation --------------------------------------------------------------
 
 function ouvrirTunnel(): void {
-  envoyer('expand')
-
+  // On repart toujours de la liste des cours, jamais d'un créneau resté
+  // affiché d'une ouverture précédente.
   etat.ecran = { nom: 'cours' }
-  dessiner()
 
-  // On ne charge les cours qu'ici, pas au démarrage. Le bouton est affiché à
-  // tous les visiteurs du site de l'artisan ; la liste n'intéresse que ceux
-  // qui cliquent. Sur un trafic à 60 % mobile, ça évite de télécharger
-  // 40 cours pour rien.
-  if (etat.cours.length === 0) chargerCours()
-}
-
-function fermerTunnel(): void {
-  envoyer('collapse')
-
-  // Hors iframe (widget ouvert seul pendant le développement), personne ne
-  // nous renverra 'closed' : on revient au bouton nous-mêmes.
-  if (!estDansUneIframe()) {
-    etat.ecran = { nom: 'bouton' }
-    dessiner()
-  }
+  tunnel.ouvrir()
 }
 
 // --- Chargement des données --------------------------------------------------
-
-async function chargerCours(): Promise<void> {
-  etat.chargement = true
-  etat.erreur = null
-  dessiner()
-
-  const resultat = await getCourses()
-
-  etat.chargement = false
-
-  if (!resultat.ok) {
-    etat.erreur = texteDErreur(resultat.erreur.statut, resultat.erreur.code)
-    dessiner()
-    return
-  }
-
-  etat.cours = resultat.donnees.courses
-  dessiner()
-}
 
 async function chargerCreneaux(cours: Course): Promise<void> {
   etat.chargement = true
@@ -1279,28 +1253,6 @@ async function chargerCreneaux(cours: Course): Promise<void> {
     .sort((a, b) => a.starts_at.localeCompare(b.starts_at))
 
   dessiner()
-}
-
-// Un message par cause, jamais un code technique : « erreur 403 » ne veut rien
-// dire pour quelqu'un qui veut réserver un cours de poterie.
-function texteDErreur(statut: number | null, code: string): string {
-  if (statut === null) {
-    return 'Vérifiez votre connexion internet, puis réessayez.'
-  }
-
-  if (code === 'origin_not_allowed') {
-    return 'Ce site n’est pas encore autorisé à afficher les réservations de l’atelier.'
-  }
-
-  if (statut === 429) {
-    return 'Trop de demandes en peu de temps. Patientez une minute, puis réessayez.'
-  }
-
-  if (statut >= 500) {
-    return 'Le service est momentanément indisponible. Réessayez dans un instant.'
-  }
-
-  return 'Une erreur inattendue est survenue.'
 }
 
 // --- Couleurs : contraste et lisibilité ---------------------------------------
@@ -1379,14 +1331,21 @@ async function demarrer(): Promise<void> {
   etat.studio = resultat.donnees
   appliquerCouleur(resultat.donnees)
 
+  const hote = estDansUneIframe() ? hoteIframe() : hoteAutonome(() => tunnel.hoteAFerme())
+
+  tunnel = creerTunnel({
+    atelier: resultat.donnees,
+    api: { getCourses },
+    hote,
+    horloge: () => new Date(),
+  })
+
+  tunnel.abonner(dessiner)
   dessiner()
 
   // La page hôte peut nous refermer sans nous le demander.
   ecouter((type) => {
-    if (type === 'closed') {
-      etat.ecran = { nom: 'bouton' }
-      dessiner()
-    }
+    if (type === 'closed') tunnel.hoteAFerme()
   })
 
   // Échap tapé DANS l'iframe n'atteint jamais le document hôte : le <dialog>
@@ -1394,13 +1353,12 @@ async function demarrer(): Promise<void> {
   // l'isolation, et il se paie ici.
   window.addEventListener('keydown', (evenement) => {
     if (evenement.key !== 'Escape') return
-    if (etat.ecran.nom === 'bouton') return
 
     // Pendant l'envoi, fermer ne servirait à rien : la requête est partie et
     // la réservation sera créée. Mieux vaut laisser l'attente se terminer.
     if (etat.ecran.nom === 'envoi') return
 
-    fermerTunnel()
+    tunnel.fermer()
   })
 
   // C'est ce message qui empêche le lien de secours d'apparaître.

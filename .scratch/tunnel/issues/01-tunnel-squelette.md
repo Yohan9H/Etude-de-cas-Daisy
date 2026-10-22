@@ -8,13 +8,13 @@ Spec : `.scratch/tunnel/spec.md`
 
 Ce ticket pose le seam pour tous les suivants : le tunnel est créé avec l'atelier déjà chargé et trois dépendances injectées (API, hôte, horloge), expose un état en lecture et une fonction d'abonnement, et ne touche jamais au DOM. Les écrans « bouton » et « cours » lisent le tunnel ; le reste du widget continue de fonctionner comme aujourd'hui.
 
-- [ ] Vitest est installé, tourne sous Node sans DOM, et un script lance la suite de tests
-- [ ] Le tunnel est créé avec l'atelier, une API, un hôte et une horloge, sans importer lui-même ces dépendances
-- [ ] Deux adapters hôte existent : iframe (envoie `expand`/`collapse`, attend l'écho `closed`) et autonome (confirme la fermeture immédiatement) ; le choix se fait une fois au démarrage
-- [ ] `ouvrir` demande l'ouverture à l'hôte et affiche la liste des cours ; la liste n'est chargée qu'à la première ouverture
-- [ ] La liste des cours a son propre état de chargement (en chargement, prête, en erreur) ; `reessayer` relance un chargement en erreur
-- [ ] `fermer` demande la fermeture à l'hôte ; `hoteAFerme` ramène au bouton
-- [ ] Le démarrage (chargement de l'atelier, couleur, Échap → `fermer`, écho `closed` → `hoteAFerme`, envoi de `ready`) reste hors du tunnel
-- [ ] Les tests passent par l'interface du tunnel avec une fausse API, un faux hôte et une horloge fixe
-- [ ] Les champs de l'ancien état global remplacés par le tunnel sont supprimés
-- [ ] Vérifié à la main dans la démo (site hostile et site sobre) : ouvrir, voir les cours, fermer de chaque façon
+- [x] Vitest est installé, tourne sous Node sans DOM, et un script lance la suite de tests
+- [x] Le tunnel est créé avec l'atelier, une API, un hôte et une horloge, sans importer lui-même ces dépendances
+- [x] Deux adapters hôte existent : iframe (envoie `expand`/`collapse`, attend l'écho `closed`) et autonome (confirme la fermeture immédiatement) ; le choix se fait une fois au démarrage
+- [x] `ouvrir` demande l'ouverture à l'hôte et affiche la liste des cours ; la liste n'est chargée qu'à la première ouverture
+- [x] La liste des cours a son propre état de chargement (en chargement, prête, en erreur) ; `reessayer` relance un chargement en erreur
+- [x] `fermer` demande la fermeture à l'hôte ; `hoteAFerme` ramène au bouton
+- [x] Le démarrage (chargement de l'atelier, couleur, Échap → `fermer`, écho `closed` → `hoteAFerme`, envoi de `ready`) reste hors du tunnel
+- [x] Les tests passent par l'interface du tunnel avec une fausse API, un faux hôte et une horloge fixe
+- [x] Les champs de l'ancien état global remplacés par le tunnel sont supprimés
+- [x] Vérifié à la main dans la démo (site hostile et site sobre) : ouvrir, voir les cours, fermer de chaque façon

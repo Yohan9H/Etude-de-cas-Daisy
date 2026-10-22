@@ -1,3 +1,4 @@
+/// <reference types="vitest" />
 import { defineConfig } from 'vite'
 
 // Vite sert deux choses :
@@ -13,5 +14,10 @@ export default defineConfig({
     // On veut échouer plutôt que glisser sur un autre port :
     // le loader et les pages de démo pointent vers 5173 en dur.
     strictPort: true,
+  },
+
+  // Les tests portent sur le tunnel, qui ne touche jamais au DOM : Node suffit.
+  test: {
+    environment: 'node',
   },
 })
