@@ -34,4 +34,4 @@ Après chaque fermeture, rouvrir : le tunnel repart de la liste des cours.
 
 ## Le faux serveur
 
-Sa page de contrôle, http://localhost:3001/__mock, choisit le scénario de réponse (refus, annulation, téléphone exigé, 429…) ; la liste fait foi dans `SCENARIOS` de `mock/server.mjs`. Les tests du tunnel couvrent ces cas plus vite ; la démo sert à voir le rendu.
+Sa page de contrôle, http://localhost:3001/__mock, choisit le scénario de réponse (refus, annulation, téléphone exigé, 429…) ; la liste fait foi dans `SCENARIOS` de `mock/server.mjs`. Un agent change de scénario sans navigateur : `curl "http://localhost:3001/__mock/set?scenario=<nom>"` (réponse 302). Remettre `ok` avant d'arrêter la démo. Les tests du tunnel couvrent ces cas plus vite ; la démo sert à voir le rendu.
