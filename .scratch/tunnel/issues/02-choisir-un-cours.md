@@ -30,7 +30,7 @@ Livré dans `0df9499`.
 - `revenir` ne gère que créneaux → cours ; coordonnées → créneaux arrive au ticket 03.
 - `main.ts` garde un type `Ecran` local pour les écrans pas encore portés ; `null` veut dire « afficher l'écran du tunnel ».
 - Transitoire, à reprendre au ticket 05 : après un refus, `rafraichirCreneaux` appelle `tunnel.choisirCours`. Les alternatives restent vides jusqu'à la réponse (avant, elles étaient périmées), et un rechargement en échec s'affiche en erreur avec « Réessayer » derrière « Voir toutes les dates ». Ce correctif anticipé n'a pas de test qui échoue d'abord ; le ticket 05 doit l'ajouter.
-- Revue : `ApiTunnel.getSlots` garde le nom anglais de l'API, comme `getCourses` au ticket 01. La règle de vocabulaire de `CODING_STANDARDS.md` l'interdit pour un nom de dépendance : à trancher (renommer les deux, ou documenter l'exception).
+- Revue : `ApiTunnel.getSlots` garde le nom anglais de l'API, comme `getCourses` au ticket 01. Tranché ensuite par l'utilisateur : l'exception est écrite dans `CODING_STANDARDS.md` (§ Vocabulaire).
 - Vérifié dans la démo :
   - site sobre : créneaux triés ; erreur via `server_error` puis « Réessayer » ;
   - scénario `slow` : retour aux cours pendant un chargement, puis changement rapide de cours ;

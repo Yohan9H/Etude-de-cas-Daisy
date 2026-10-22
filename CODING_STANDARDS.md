@@ -6,6 +6,8 @@ Règles appliquées en revue. Elles demandent du jugement ; ce qu'un outil véri
 
 Les identifiants nouveaux suivent `GLOSSARY.md` : `atelier`, `cours`, `creneau`, `tunnel`, `refus`. Les noms anglais de l'API (`Studio`, `Course`, `Slot`, `getCourses`…) restent à la frontière : dans `src/api.ts` et dans les types qu'on en importe, jamais dans un nom de variable, de paramètre ou de dépendance écrit hors de `api.ts`.
 
+Exception : les méthodes de `ApiTunnel` (`getCourses`, `getSlots`…) reprennent le nom des fonctions de `api.ts`. Le point d'entrée passe ces fonctions telles quelles au tunnel (`api: { getCourses, getSlots }`) : les renommer obligerait à écrire un adapter qui ne ferait que traduire des noms. L'exception s'arrête au type `ApiTunnel` et à son branchement ; les variables et paramètres du tunnel restent en français.
+
 ## Tunnel
 
 `src/tunnel.ts` possède l'état du parcours et ses transitions. Il importe seulement des types et reçoit l'API, l'hôte et l'horloge à la création. Le DOM, `window` et `postMessage` vivent dans `main.ts`, `pont.ts` et `hote.ts`. Une transition produit un seul changement d'état, donc un seul redessin.
