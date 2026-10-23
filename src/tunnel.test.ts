@@ -78,10 +78,10 @@ function fauxHote() {
 
 const horlogeFixe = () => new Date('2026-10-22T10:00:00Z')
 
-function nouveauTunnel() {
+function nouveauTunnel(atelier: Studio = ATELIER) {
   const { api, appelsCours, appelsCreneaux } = fausseApi()
   const { hote, demandes } = fauxHote()
-  const tunnel = creerTunnel({ atelier: ATELIER, api, hote, horloge: horlogeFixe })
+  const tunnel = creerTunnel({ atelier, api, hote, horloge: horlogeFixe })
 
   return { tunnel, appelsCours, appelsCreneaux, demandes }
 }
@@ -98,6 +98,18 @@ async function tunnelSurLesCours() {
 
   return outils
 }
+
+// Un tunnel sur les créneaux du tour, prêts.
+async function tunnelSurLesCreneaux(creneaux: Slot[]) {
+  const outils = await tunnelSurLesCours()
+  outils.tunnel.choisirCours(TOUR)
+  outils.appelsCreneaux[0].resoudre({ ok: true, donnees: { slots: creneaux } })
+  await laisserFiler()
+
+  return outils
+}
+
+const PROCHE = creneau('proche', '2026-10-24T14:00:00Z')
 
 // --- Les comportements -------------------------------------------------------
 
@@ -330,3 +342,167 @@ describe('changer de cours pendant un chargement', () => {
   })
 })
 
+describe('choisir un créneau', () => {
+  it('affiche l’écran des coordonnées pour ce créneau', async () => {
+    const { tunnel } = await tunnelSurLesCreneaux([PROCHE])
+
+    tunnel.choisirCreneau(PROCHE)
+
+    expect(tunnel.etat.ecran).toMatchObject({ nom: 'coordonnees', cours: TOUR, creneau: PROCHE })
+  })
+
+  it('ne peut pas choisir un créneau complet', async () => {
+    const complet = { ...creneau('complet', '2026-10-23T14:00:00Z'), seats_available: 0 }
+    const { tunnel } = await tunnelSurLesCreneaux([complet, PROCHE])
+
+    tunnel.choisirCreneau(complet)
+
+    expect(tunnel.etat.ecran).toEqual({ nom: 'creneaux', cours: TOUR })
+  })
+})
+
+describe('revenir aux créneaux', () => {
+  it('ramène des coordonnées aux créneaux du même cours, sans les recharger', async () => {
+    const { tunnel, appelsCreneaux } = await tunnelSurLesCreneaux([PROCHE])
+    tunnel.choisirCreneau(PROCHE)
+
+    tunnel.revenir()
+
+    expect(tunnel.etat.ecran).toEqual({ nom: 'creneaux', cours: TOUR })
+    expect(tunnel.etat.creneaux).toEqual({ etat: 'prete', liste: [PROCHE] })
+    expect(appelsCreneaux).toHaveLength(1)
+  })
+
+  it('garde la saisie et le nombre de places', async () => {
+    const { tunnel } = await tunnelSurLesCreneaux([PROCHE])
+    tunnel.choisirCreneau(PROCHE)
+    tunnel.saisir('first_name', 'Camille')
+    tunnel.saisir('email', 'camille@exemple.fr')
+    tunnel.changerPlaces(2)
+
+    tunnel.revenir()
+    tunnel.choisirCreneau(PROCHE)
+
+    expect(tunnel.etat.saisie).toEqual({
+      first_name: 'Camille',
+      last_name: '',
+      email: 'camille@exemple.fr',
+      phone: '',
+      notes: '',
+    })
+    expect(tunnel.etat.places).toBe(2)
+  })
+})
+
+describe('saisir ses coordonnées', () => {
+  it('ne demande pas le téléphone quand l’atelier ne l’exige pas', () => {
+    const { tunnel } = nouveauTunnel()
+
+    expect(tunnel.etat.telephoneDemande).toBe(false)
+  })
+
+  it('demande le téléphone quand l’atelier l’exige', () => {
+    const { tunnel } = nouveauTunnel({
+      ...ATELIER,
+      booking_policy: { ...ATELIER.booking_policy, requires_phone: true },
+    })
+
+    expect(tunnel.etat.telephoneDemande).toBe(true)
+  })
+})
+
+// L'atelier de test accepte au plus 4 places par réservation.
+describe('choisir le nombre de places', () => {
+  it('commence à une place', async () => {
+    const { tunnel } = await tunnelSurLesCreneaux([PROCHE])
+
+    tunnel.choisirCreneau(PROCHE)
+
+    expect(tunnel.etat.places).toBe(1)
+  })
+
+  it('ne dépasse pas le plafond de l’atelier', async () => {
+    const { tunnel } = await tunnelSurLesCreneaux([PROCHE])
+    tunnel.choisirCreneau(PROCHE)
+
+    tunnel.changerPlaces(3)
+    expect(tunnel.etat.places).toBe(3)
+
+    tunnel.changerPlaces(6)
+    expect(tunnel.etat.places).toBe(4)
+    expect(tunnel.etat.ecran).toMatchObject({ nom: 'coordonnees', placesMaximum: 4 })
+  })
+
+  it('ne dépasse pas les places restantes du créneau', async () => {
+    const presqueComplet = { ...PROCHE, seats_available: 2 }
+    const { tunnel } = await tunnelSurLesCreneaux([presqueComplet])
+    tunnel.choisirCreneau(presqueComplet)
+
+    tunnel.changerPlaces(4)
+
+    expect(tunnel.etat.places).toBe(2)
+    expect(tunnel.etat.ecran).toMatchObject({ nom: 'coordonnees', placesMaximum: 2 })
+  })
+
+  it('ne descend pas sous une place, même pour une valeur absurde', async () => {
+    const { tunnel } = await tunnelSurLesCreneaux([PROCHE])
+    tunnel.choisirCreneau(PROCHE)
+
+    tunnel.changerPlaces(0)
+    expect(tunnel.etat.places).toBe(1)
+
+    tunnel.changerPlaces(3)
+    tunnel.changerPlaces(Number(''))
+    expect(tunnel.etat.places).toBe(1)
+
+    tunnel.changerPlaces(Number.NaN)
+    expect(tunnel.etat.places).toBe(1)
+  })
+
+  it('garde le nombre de places en changeant de créneau dans le même cours, ramené au nouveau plafond', async () => {
+    const lointain = creneau('lointain', '2026-12-05T14:00:00Z')
+    const presqueComplet = { ...creneau('presque-complet', '2026-10-25T14:00:00Z'), seats_available: 2 }
+    const { tunnel } = await tunnelSurLesCreneaux([PROCHE, presqueComplet, lointain])
+
+    tunnel.choisirCreneau(PROCHE)
+    tunnel.changerPlaces(3)
+    tunnel.revenir()
+    tunnel.choisirCreneau(lointain)
+    expect(tunnel.etat.places).toBe(3)
+
+    tunnel.revenir()
+    tunnel.choisirCreneau(presqueComplet)
+    expect(tunnel.etat.places).toBe(2)
+  })
+
+  it('revient à une place en changeant de cours', async () => {
+    const { tunnel, appelsCreneaux } = await tunnelSurLesCreneaux([PROCHE])
+    const creneauModelage = creneau('modelage-1', '2026-10-25T14:00:00Z')
+    tunnel.choisirCreneau(PROCHE)
+    tunnel.changerPlaces(3)
+
+    tunnel.revenir()
+    tunnel.revenir()
+    tunnel.choisirCours(MODELAGE)
+    appelsCreneaux[1].resoudre({ ok: true, donnees: { slots: [creneauModelage] } })
+    await laisserFiler()
+    tunnel.choisirCreneau(creneauModelage)
+
+    expect(tunnel.etat.places).toBe(1)
+  })
+
+  it('garde le nombre de places en rechoisissant le même cours', async () => {
+    const { tunnel, appelsCreneaux } = await tunnelSurLesCreneaux([PROCHE])
+    tunnel.choisirCreneau(PROCHE)
+    tunnel.changerPlaces(3)
+
+    tunnel.revenir()
+    tunnel.revenir()
+    tunnel.choisirCours(TOUR)
+    appelsCreneaux[1].resoudre({ ok: true, donnees: { slots: [PROCHE] } })
+    await laisserFiler()
+    tunnel.choisirCreneau(PROCHE)
+
+    expect(tunnel.etat.places).toBe(3)
+  })
+})

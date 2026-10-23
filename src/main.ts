@@ -12,20 +12,20 @@ import { getStudio, getCourses, getSlots, postBooking } from './api'
 import type { Studio, Course, Slot, Erreur as ErreurApi } from './api'
 import { envoyer, ecouter, estDansUneIframe } from './pont'
 import { creerTunnel, FENETRE_JOURS } from './tunnel'
-import type { Tunnel } from './tunnel'
+import type { EtatTunnel, Saisie, Tunnel } from './tunnel'
 import { hoteAutonome, hoteIframe } from './hote'
 
 // --- L'état ------------------------------------------------------------------
 
-// Le tunnel décide s'il est ouvert et porte les écrans des cours et des
-// créneaux. Les écrans qui suivent ne l'ont pas encore rejoint : quand l'un
-// d'eux est affiché, il est noté ici et passe devant l'écran du tunnel, qui
-// reste sur les créneaux du cours. Ce type disparaît quand l'envoi et les
-// refus auront rejoint le tunnel (tickets 03 à 05).
+// Le tunnel décide s'il est ouvert et porte les écrans des cours, des
+// créneaux et des coordonnées. Les écrans qui suivent ne l'ont pas encore
+// rejoint : quand l'un d'eux est affiché, il est noté ici et passe devant
+// l'écran du tunnel, qui reste sur les coordonnées ou, après un refus, sur
+// les créneaux du cours. Ce type disparaît quand l'envoi et les refus auront
+// rejoint le tunnel (tickets 04 et 05).
 let tunnel: Tunnel
 
 type Ecran =
-  | { nom: 'coordonnees'; cours: Course; creneau: Slot }
   | { nom: 'envoi'; cours: Course; creneau: Slot }
   | { nom: 'confirme'; creneau: Slot; code: string; total: number }
 
@@ -33,23 +33,12 @@ type Ecran =
   | { nom: 'place-partie'; cours: Course; creneau: Slot; restantes: number }
   | { nom: 'creneau-annule'; cours: Course }
 
-type Saisie = {
-  first_name: string
-  last_name: string
-  email: string
-  phone: string
-  notes: string
-}
-
 type Etat = {
   // null : on affiche l'écran du tunnel.
   ecran: Ecran | null
 
   studio: Studio | null
 
-  // Conservée hors des écrans : quand le refus arrivera, l'utilisateur ne
-  // devra pas avoir à ressaisir ce qu'il vient de taper.
-  saisie: Saisie
   erreurs: Partial<Record<keyof Saisie, string>>
 
   // Erreur qui ne porte sur aucun champ en particulier (réseau, 429, 500).
@@ -57,11 +46,8 @@ type Etat = {
 
   // Le serveur peut exiger un téléphone alors que /studio disait le contraire :
   // l'artisan a pu changer sa politique après le chargement de la page.
+  // Transitoire : rejoint `telephoneDemande` du tunnel au ticket 06.
   telephoneExige: boolean
-
-  // Nombre de places demandées. Borné par l'atelier (max_seats_per_booking)
-  // ET par le créneau (seats_available).
-  places: number
 
   // Verrou. La création met 1,5 à 4 s : sans lui, un double-clic crée
   // deux réservations.
@@ -73,11 +59,9 @@ const etat: Etat = {
 
   studio: null,
 
-  saisie: { first_name: '', last_name: '', email: '', phone: '', notes: '' },
   erreurs: {},
   erreurEnvoi: null,
   telephoneExige: false,
-  places: 1,
   envoiEnCours: false,
 }
 
@@ -366,8 +350,8 @@ type DefinitionChamp = {
 }
 
 // Les champs demandés dépendent de la politique de l'atelier : le téléphone
-// n'apparaît que si `requires_phone` est vrai, ou si le serveur l'a réclamé
-// en cours de route (voir `telephoneExige`). Un champ en moins à l'étape où
+// n'apparaît que si le tunnel le demande, ou si le serveur l'a réclamé en
+// cours de route (voir `telephoneExige`). Un champ en moins à l'étape où
 // on perd 60 % des gens, c'est la modification la plus rentable du tunnel.
 function champsDemandes(): DefinitionChamp[] {
   const champs: DefinitionChamp[] = [
@@ -397,7 +381,7 @@ function champsDemandes(): DefinitionChamp[] {
     },
   ]
 
-  if (etat.studio?.booking_policy.requires_phone || etat.telephoneExige) {
+  if (tunnel.etat.telephoneDemande || etat.telephoneExige) {
     champs.push({
       cle: 'phone',
       libelle: 'Téléphone',
@@ -438,7 +422,7 @@ function champ(definition: DefinitionChamp): HTMLElement {
 
   saisie.id = id
   saisie.name = definition.cle
-  saisie.value = etat.saisie[definition.cle]
+  saisie.value = tunnel.etat.saisie[definition.cle]
 
   if (!definition.multiligne) {
     const entree = saisie as HTMLInputElement
@@ -464,11 +448,9 @@ function champ(definition: DefinitionChamp): HTMLElement {
     saisie.setAttribute('aria-describedby', idErreur)
   }
 
-  // On écrit dans l'état à chaque frappe, mais on NE redessine PAS :
-  // reconstruire le DOM ferait perdre le curseur à chaque lettre.
-  saisie.addEventListener('input', () => {
-    etat.saisie[definition.cle] = saisie.value
-  })
+  // Le tunnel note chaque frappe ; `surChangement` ne redessine pas pour si
+  // peu (voir plus bas).
+  saisie.addEventListener('input', () => tunnel.saisir(definition.cle, saisie.value))
 
   bloc.appendChild(saisie)
 
@@ -489,17 +471,8 @@ function champ(definition: DefinitionChamp): HTMLElement {
   return bloc
 }
 
-// Deux limites se cumulent : celle que l'atelier s'impose, et ce qui reste
-// réellement sur ce créneau. C'est la plus basse qui s'applique.
-function placesMaximum(creneau: Slot): number {
-  const plafondAtelier = etat.studio?.booking_policy.max_seats_per_booking ?? 1
-
-  return Math.max(1, Math.min(plafondAtelier, creneau.seats_available))
-}
-
-function selecteurPlaces(creneau: Slot, surChangement: () => void): HTMLElement | null {
-  const maximum = placesMaximum(creneau)
-
+// `maximum` est la borne calculée par le tunnel pour ce créneau.
+function selecteurPlaces(creneau: Slot, maximum: number): HTMLElement | null {
   // Une seule place possible : un sélecteur à un choix est du bruit.
   if (maximum <= 1) return null
 
@@ -517,20 +490,13 @@ function selecteurPlaces(creneau: Slot, surChangement: () => void): HTMLElement 
   for (let n = 1; n <= maximum; n++) {
     const choix = creer('option', undefined, n === 1 ? '1 personne' : `${n} personnes`)
     choix.value = String(n)
-    choix.selected = n === etat.places
+    choix.selected = n === tunnel.etat.places
     liste.appendChild(choix)
   }
 
-  liste.addEventListener('change', () => {
-    const choisi = Number(liste.value)
-
-    // On ne fait pas confiance à la valeur brute : un <select> dont la valeur
-    // ne correspond à aucune option renvoie une chaîne vide, et Number('')
-    // vaut 0. On enverrait alors seats: 0 à l'API.
-    etat.places = Number.isFinite(choisi) && choisi >= 1 ? Math.min(choisi, maximum) : 1
-
-    surChangement()
-  })
+  // Le tunnel borne la valeur, même absurde. Changer le nombre de places
+  // change le total affiché : le redessin suit.
+  liste.addEventListener('change', () => tunnel.changerPlaces(Number(liste.value)))
 
   bloc.appendChild(liste)
 
@@ -554,17 +520,18 @@ function recapitulatif(cours: Course, creneau: Slot): HTMLElement {
       `${formaterJour(creneau.starts_at)} à ${formaterHeure(creneau.starts_at)} · ${formaterDuree(cours.duration_minutes)}`,
     ),
   )
-  const total = creneau.price_cents * etat.places
+  const places = tunnel.etat.places
+  const total = creneau.price_cents * places
 
   boite.appendChild(creer('p', 'recap-prix', formaterPrix(total)))
 
   // Le détail n'apparaît que s'il apporte quelque chose.
-  if (etat.places > 1) {
+  if (places > 1) {
     boite.appendChild(
       creer(
         'p',
         'recap-detail-prix',
-        `${etat.places} × ${formaterPrix(creneau.price_cents)}`,
+        `${places} × ${formaterPrix(creneau.price_cents)}`,
       ),
     )
   }
@@ -675,16 +642,7 @@ function ecranCreneaux(cours: Course): HTMLElement {
   const liste = creer('div', 'liste bande')
 
   for (const creneau of creneaux.liste) {
-    liste.appendChild(
-      ligneCreneau(creneau, (choisi) => {
-        // Le créneau précédent permettait peut-être plus de places que
-        // celui-ci : on ramène le nombre demandé dans les limites.
-        etat.places = Math.min(etat.places, placesMaximum(choisi))
-
-        etat.ecran = { nom: 'coordonnees', cours, creneau: choisi }
-        dessiner()
-      }),
-    )
+    liste.appendChild(ligneCreneau(creneau, (choisi) => tunnel.choisirCreneau(choisi)))
   }
 
   corps.appendChild(liste)
@@ -693,16 +651,16 @@ function ecranCreneaux(cours: Course): HTMLElement {
   return zone
 }
 
-function ecranCoordonnees(cours: Course, creneau: Slot): HTMLElement {
+function ecranCoordonnees(cours: Course, creneau: Slot, placesMaximum: number): HTMLElement {
   const zone = creer('div', 'tunnel')
 
   zone.appendChild(
-    // Le tunnel est resté sur les créneaux de ce cours.
     enteteTunnel('Vos coordonnées', () => {
-      etat.ecran = null
+      // Transitoire : les erreurs rejoignent le tunnel aux tickets 04 et 06.
       etat.erreurs = {}
       etat.erreurEnvoi = null
-      dessiner()
+
+      tunnel.revenir()
     }),
   )
 
@@ -724,9 +682,7 @@ function ecranCoordonnees(cours: Course, creneau: Slot): HTMLElement {
   const formulaire = creer('form')
   formulaire.noValidate = true
 
-  // Changer le nombre de places change le total affiché sur le bouton :
-  // on redessine. La saisie est dans l'état, elle ne se perd pas.
-  const selecteur = selecteurPlaces(creneau, dessiner)
+  const selecteur = selecteurPlaces(creneau, placesMaximum)
   if (selecteur) formulaire.appendChild(selecteur)
 
   for (const definition of champsDemandes()) {
@@ -736,7 +692,7 @@ function ecranCoordonnees(cours: Course, creneau: Slot): HTMLElement {
   const envoyerBouton = creer(
     'button',
     'bouton-principal bouton-envoi',
-    `Confirmer · ${formaterPrix(creneau.price_cents * etat.places)}`,
+    `Confirmer · ${formaterPrix(creneau.price_cents * tunnel.etat.places)}`,
   )
   envoyerBouton.type = 'submit'
 
@@ -803,7 +759,7 @@ function ecranConfirme(creneau: Slot, code: string, total: number): HTMLElement 
     creer(
       'p',
       'confirmation-detail',
-      `Un email de confirmation vient de partir à ${etat.saisie.email}.`,
+      `Un email de confirmation vient de partir à ${tunnel.etat.saisie.email}.`,
     ),
   )
 
@@ -825,8 +781,11 @@ function ecranConfirme(creneau: Slot, code: string, total: number): HTMLElement 
 
   fermer.addEventListener('click', () => {
     // La réservation est faite : on ne garde pas les coordonnées pour la
-    // prochaine ouverture du widget.
-    etat.saisie = { first_name: '', last_name: '', email: '', phone: '', notes: '' }
+    // prochaine ouverture du widget. Transitoire : `terminer` efface la
+    // saisie dans le tunnel au ticket 04.
+    for (const cle of Object.keys(tunnel.etat.saisie) as (keyof Saisie)[]) {
+      tunnel.saisir(cle, '')
+    }
     etat.erreurs = {}
     etat.erreurEnvoi = null
 
@@ -869,7 +828,7 @@ function ecranPlacePartie(cours: Course, creneau: Slot, restantes: number): HTML
       creer(
         'p',
         'refus-detail',
-        `Vous en demandiez ${etat.places} pour le créneau du ${quand}. Les autres viennent d’être réservées. Vos coordonnées sont conservées.`,
+        `Vous en demandiez ${tunnel.etat.places} pour le créneau du ${quand}. Les autres viennent d’être réservées. Vos coordonnées sont conservées.`,
       ),
     )
 
@@ -879,10 +838,13 @@ function ecranPlacePartie(cours: Course, creneau: Slot, restantes: number): HTML
       restantes === 1 ? 'Réserver pour 1 personne' : `Réserver pour ${restantes} personnes`,
     )
 
+    // Le tunnel est sur les créneaux du cours, rechargés après le refus.
+    // Transitoire : deux changements, donc deux redessins, jusqu'à ce que le
+    // refus rejoigne le tunnel au ticket 05.
     reduire.addEventListener('click', () => {
-      etat.places = restantes
-      etat.ecran = { nom: 'coordonnees', cours, creneau }
-      dessiner()
+      etat.ecran = null
+      tunnel.choisirCreneau(creneau)
+      tunnel.changerPlaces(restantes)
     })
 
     bande.appendChild(reduire)
@@ -911,12 +873,11 @@ function ecranPlacePartie(cours: Course, creneau: Slot, restantes: number): HTML
     // Les trois plus proches : au-delà, on renvoie vers la liste complète.
     for (const autre of autres.slice(0, 3)) {
       liste.appendChild(
+        // La saisie n'est pas touchée : un clic suffit pour repartir. Le
+        // tunnel est sur les créneaux du cours, rechargés après le refus.
         ligneCreneau(autre, (choisi) => {
-          // La saisie n'est pas touchée : un clic suffit pour repartir.
-          etat.places = Math.min(etat.places, placesMaximum(choisi))
-
-          etat.ecran = { nom: 'coordonnees', cours, creneau: choisi }
-          dessiner()
+          etat.ecran = null
+          tunnel.choisirCreneau(choisi)
         }),
       )
     }
@@ -971,7 +932,11 @@ function ecranCreneauAnnule(cours: Course): HTMLElement {
 
 // --- Le rendu ----------------------------------------------------------------
 
+// Le dernier état du tunnel dessiné, pour `surChangement`.
+let etatDessine: EtatTunnel | null = null
+
 function dessiner(): void {
+  etatDessine = tunnel.etat
   vider(racine)
 
   if (tunnel.etat.ecran.nom === 'bouton') {
@@ -980,17 +945,19 @@ function dessiner(): void {
   }
 
   if (etat.ecran === null) {
-    if (tunnel.etat.ecran.nom === 'creneaux') {
-      racine.appendChild(ecranCreneaux(tunnel.etat.ecran.cours))
+    const ecran = tunnel.etat.ecran
+
+    if (ecran.nom === 'creneaux') {
+      racine.appendChild(ecranCreneaux(ecran.cours))
+      return
+    }
+
+    if (ecran.nom === 'coordonnees') {
+      racine.appendChild(ecranCoordonnees(ecran.cours, ecran.creneau, ecran.placesMaximum))
       return
     }
 
     racine.appendChild(ecranCours())
-    return
-  }
-
-  if (etat.ecran.nom === 'coordonnees') {
-    racine.appendChild(ecranCoordonnees(etat.ecran.cours, etat.ecran.creneau))
     return
   }
 
@@ -1014,6 +981,27 @@ function dessiner(): void {
   racine.appendChild(ecranCreneauAnnule(etat.ecran.cours))
 }
 
+// Une frappe ne change que la saisie : on NE redessine PAS, reconstruire le
+// DOM ferait perdre le curseur à chaque lettre. Le champ affiche déjà ce qui
+// vient d'être tapé.
+function surChangement(): void {
+  const avant = etatDessine
+  const apres = tunnel.etat
+
+  if (avant !== null && seuleLaSaisieAChange(avant, apres)) {
+    etatDessine = apres
+    return
+  }
+
+  dessiner()
+}
+
+function seuleLaSaisieAChange(avant: EtatTunnel, apres: EtatTunnel): boolean {
+  const cles = Object.keys(apres) as (keyof EtatTunnel)[]
+
+  return avant.saisie !== apres.saisie && cles.every((cle) => cle === 'saisie' || avant[cle] === apres[cle])
+}
+
 // --- Validation --------------------------------------------------------------
 
 // Volontairement permissive : on vérifie qu'il y a un @ entouré de texte et un
@@ -1027,7 +1015,7 @@ function valider(): Partial<Record<keyof Saisie, string>> {
   const erreurs: Partial<Record<keyof Saisie, string>> = {}
 
   for (const definition of champsDemandes()) {
-    const valeur = etat.saisie[definition.cle].trim()
+    const valeur = tunnel.etat.saisie[definition.cle].trim()
 
     if (definition.obligatoire && !valeur) {
       erreurs[definition.cle] = definition.siManquant ?? `${definition.libelle} est nécessaire.`
@@ -1063,19 +1051,21 @@ async function soumettre(cours: Course, creneau: Slot): Promise<void> {
   etat.ecran = { nom: 'envoi', cours, creneau }
   dessiner()
 
+  const { saisie, places } = tunnel.etat
+
   const resultat = await postBooking({
     slot_id: creneau.slot_id,
 
-    seats: etat.places,
+    seats: places,
 
     customer: {
-      first_name: etat.saisie.first_name.trim(),
-      last_name: etat.saisie.last_name.trim(),
-      email: etat.saisie.email.trim(),
-      phone: etat.saisie.phone.trim() || undefined,
+      first_name: saisie.first_name.trim(),
+      last_name: saisie.last_name.trim(),
+      email: saisie.email.trim(),
+      phone: saisie.phone.trim() || undefined,
     },
 
-    notes: etat.saisie.notes.trim() || undefined,
+    notes: saisie.notes.trim() || undefined,
   })
 
   etat.envoiEnCours = false
@@ -1116,7 +1106,8 @@ function traiterEchec(cours: Course, creneau: Slot, erreur: ErreurApi): void {
   }
 
   // --- On retourne au formulaire, saisie intacte --------------------------
-  etat.ecran = { nom: 'coordonnees', cours, creneau }
+  // Le tunnel est resté sur les coordonnées pendant l'envoi.
+  etat.ecran = null
 
   if (erreur.code === 'phone_required') {
     // /studio disait que le téléphone n'était pas demandé, le serveur dit
@@ -1137,11 +1128,12 @@ function traiterEchec(cours: Course, creneau: Slot, erreur: ErreurApi): void {
 
     // On ramène la demande dans les limites plutôt que de laisser la personne
     // deviner combien elle a le droit de réserver.
-    etat.places = Math.min(etat.places, plafond)
+    const places = Math.min(tunnel.etat.places, plafond)
 
-    etat.erreurEnvoi = `Cet atelier accepte au maximum ${plafond} places par réservation. Votre demande a été ramenée à ${etat.places}.`
+    etat.erreurEnvoi = `Cet atelier accepte au maximum ${plafond} places par réservation. Votre demande a été ramenée à ${places}.`
 
-    dessiner()
+    // Redessine, le bandeau compris.
+    tunnel.changerPlaces(places)
     return
   }
 
@@ -1276,7 +1268,7 @@ async function demarrer(): Promise<void> {
     horloge: () => new Date(),
   })
 
-  tunnel.abonner(dessiner)
+  tunnel.abonner(surChangement)
   dessiner()
 
   // La page hôte peut nous refermer sans nous le demander.

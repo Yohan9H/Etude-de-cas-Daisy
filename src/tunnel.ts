@@ -25,7 +25,13 @@ export type Horloge = () => Date
 
 // --- L'état ------------------------------------------------------------------
 
-export type Ecran = { nom: 'bouton' } | { nom: 'cours' } | { nom: 'creneaux'; cours: Course }
+export type Ecran =
+  | { nom: 'bouton' }
+  | { nom: 'cours' }
+  | { nom: 'creneaux'; cours: Course }
+  // `placesMaximum` est la borne des places pour ce créneau : l'écran n'a pas
+  // à la recalculer.
+  | { nom: 'coordonnees'; cours: Course; creneau: Slot; placesMaximum: number }
 
 // Un chargement a son propre état, à côté de l'écran : la liste des cours et
 // celle des créneaux ne partagent pas le leur. Sinon le « Chargement… » des
@@ -35,6 +41,16 @@ export type Chargement<T> =
   | { etat: 'prete'; liste: T[] }
   | { etat: 'en-erreur'; message: string }
 
+// Les clés reprennent celles de l'API : la saisie part telle quelle dans
+// `customer`, plus les précisions.
+export type Saisie = {
+  first_name: string
+  last_name: string
+  email: string
+  phone: string
+  notes: string
+}
+
 export type EtatTunnel = {
   ecran: Ecran
 
@@ -43,6 +59,17 @@ export type EtatTunnel = {
 
   // Les créneaux du dernier cours choisi. null tant qu'aucun cours ne l'a été.
   creneaux: Chargement<Slot> | null
+
+  // Toujours dans les limites de `bornerPlaces` pour le créneau choisi.
+  places: number
+
+  // Gardée hors des écrans : revenir aux créneaux ou subir un refus ne doit
+  // pas obliger à retaper ce qu'on vient de saisir.
+  saisie: Saisie
+
+  // Un champ en moins à l'étape où on perd 60 % des gens : le téléphone
+  // n'est demandé que si l'atelier l'exige.
+  telephoneDemande: boolean
 }
 
 // La spec plafonne la fenêtre à 90 jours, au-delà c'est un 400.
@@ -60,15 +87,26 @@ export function creerTunnel(dependances: {
   hote: Hote
   horloge: Horloge
 }) {
-  const { api, hote, horloge } = dependances
+  const { atelier, api, hote, horloge } = dependances
 
-  let etat: EtatTunnel = { ecran: { nom: 'bouton' }, cours: null, creneaux: null }
+  let etat: EtatTunnel = {
+    ecran: { nom: 'bouton' },
+    cours: null,
+    creneaux: null,
+    places: 1,
+    saisie: { first_name: '', last_name: '', email: '', phone: '', notes: '' },
+    telephoneDemande: atelier.booking_policy.requires_phone,
+  }
   const abonnes = new Set<() => void>()
 
   // Numéro de la dernière demande de créneaux. Une réponse qui ne porte pas
   // ce numéro est périmée : la personne a choisi un autre cours entre-temps,
   // et ses créneaux ne doivent pas écraser ceux qu'elle regarde.
   let derniereDemandeCreneaux = 0
+
+  // Le nombre de places vaut pour un cours : on le garde d'un créneau à
+  // l'autre, mais on repart d'une place quand le cours change.
+  let idDernierCours: string | null = null
 
   function changer(modification: Partial<EtatTunnel>): void {
     etat = { ...etat, ...modification }
@@ -117,6 +155,22 @@ export function creerTunnel(dependances: {
       .sort((a, b) => a.starts_at.localeCompare(b.starts_at))
   }
 
+  // Deux limites se cumulent : celle que l'atelier s'impose, et ce qui reste
+  // réellement sur ce créneau. C'est la plus basse qui s'applique, jamais
+  // moins d'une place. Seul endroit où cette borne est écrite.
+  function placesMaximum(creneau: Slot): number {
+    return Math.max(1, Math.min(atelier.booking_policy.max_seats_per_booking, creneau.seats_available))
+  }
+
+  // On ne fait pas confiance à la valeur demandée : un <select> dont la valeur
+  // ne correspond à aucune option donne Number('') = 0, et on enverrait alors
+  // seats: 0 à l'API.
+  function bornerPlaces(demande: number, creneau: Slot): number {
+    if (!Number.isInteger(demande)) return 1
+
+    return Math.max(1, Math.min(demande, placesMaximum(creneau)))
+  }
+
   return {
     get etat(): EtatTunnel {
       return etat
@@ -153,11 +207,47 @@ export function creerTunnel(dependances: {
     },
 
     choisirCours(cours: Course): void {
-      changer({ ecran: { nom: 'creneaux', cours }, creneaux: { etat: 'en-chargement' } })
+      const places = cours.course_id === idDernierCours ? etat.places : 1
+      idDernierCours = cours.course_id
+
+      changer({ ecran: { nom: 'creneaux', cours }, creneaux: { etat: 'en-chargement' }, places })
       chargerCreneaux(cours)
     },
 
+    choisirCreneau(creneau: Slot): void {
+      if (etat.ecran.nom !== 'creneaux') return
+      if (creneau.seats_available <= 0) return
+
+      changer({
+        ecran: {
+          nom: 'coordonnees',
+          cours: etat.ecran.cours,
+          creneau,
+          placesMaximum: placesMaximum(creneau),
+        },
+
+        // Le créneau précédent permettait peut-être plus de places que
+        // celui-ci : on ramène le nombre demandé dans les limites.
+        places: bornerPlaces(etat.places, creneau),
+      })
+    },
+
+    changerPlaces(demande: number): void {
+      if (etat.ecran.nom !== 'coordonnees') return
+
+      changer({ places: bornerPlaces(demande, etat.ecran.creneau) })
+    },
+
+    saisir(champ: keyof Saisie, valeur: string): void {
+      changer({ saisie: { ...etat.saisie, [champ]: valeur } })
+    },
+
     revenir(): void {
+      if (etat.ecran.nom === 'coordonnees') {
+        changer({ ecran: { nom: 'creneaux', cours: etat.ecran.cours } })
+        return
+      }
+
       if (etat.ecran.nom !== 'creneaux') return
 
       changer({ ecran: { nom: 'cours' } })
