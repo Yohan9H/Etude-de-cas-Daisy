@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import type { Course, Resultat, Slot, Studio } from './api'
+import type { Booking, Course, Resultat, Slot, Studio } from './api'
 import { creerTunnel } from './tunnel'
 import type { ApiTunnel, Hote } from './tunnel'
 
@@ -47,6 +47,9 @@ function fausseApi() {
     depuis: Date
     jusqua: Date
   })[] = []
+  const appelsReservation: (ReturnType<typeof reponseEnAttente<Booking>> & {
+    corps: Parameters<ApiTunnel['postBooking']>[0]
+  })[] = []
 
   const api: ApiTunnel = {
     getCourses() {
@@ -60,9 +63,15 @@ function fausseApi() {
       appelsCreneaux.push({ ...reponse, idCours, depuis, jusqua })
       return reponse.promesse
     },
+
+    postBooking(corps) {
+      const reponse = reponseEnAttente<Booking>()
+      appelsReservation.push({ ...reponse, corps })
+      return reponse.promesse
+    },
   }
 
-  return { api, appelsCours, appelsCreneaux }
+  return { api, appelsCours, appelsCreneaux, appelsReservation }
 }
 
 function fauxHote() {
@@ -79,11 +88,11 @@ function fauxHote() {
 const horlogeFixe = () => new Date('2026-10-22T10:00:00Z')
 
 function nouveauTunnel(atelier: Studio = ATELIER) {
-  const { api, appelsCours, appelsCreneaux } = fausseApi()
+  const { api, appelsCours, appelsCreneaux, appelsReservation } = fausseApi()
   const { hote, demandes } = fauxHote()
   const tunnel = creerTunnel({ atelier, api, hote, horloge: horlogeFixe })
 
-  return { tunnel, appelsCours, appelsCreneaux, demandes }
+  return { tunnel, appelsCours, appelsCreneaux, appelsReservation, demandes }
 }
 
 // Laisse les promesses déjà résolues produire leurs effets.
@@ -110,6 +119,36 @@ async function tunnelSurLesCreneaux(creneaux: Slot[]) {
 }
 
 const PROCHE = creneau('proche', '2026-10-24T14:00:00Z')
+
+// Un tunnel sur les coordonnées du créneau proche, saisie vide.
+async function tunnelSurLesCoordonnees() {
+  const outils = await tunnelSurLesCreneaux([PROCHE])
+  outils.tunnel.choisirCreneau(PROCHE)
+
+  return outils
+}
+
+// Un tunnel sur l'écran de confirmation, réservation faite par Camille.
+async function tunnelSurLaConfirmation() {
+  const outils = await tunnelSurLesCoordonnees()
+  saisirCamille(outils.tunnel)
+  outils.tunnel.envoyer()
+  outils.appelsReservation[0].resoudre({
+    ok: true,
+    donnees: { booking_id: 'b1', status: 'confirmed', confirmation_code: 'DSY-4821', total_cents: 6500 },
+  })
+  await laisserFiler()
+
+  return outils
+}
+
+const SAISIE_VIDE = { first_name: '', last_name: '', email: '', phone: '', notes: '' }
+
+function saisirCamille(tunnel: ReturnType<typeof nouveauTunnel>['tunnel']) {
+  tunnel.saisir('first_name', 'Camille')
+  tunnel.saisir('last_name', 'Martin')
+  tunnel.saisir('email', 'camille@exemple.fr')
+}
 
 // --- Les comportements -------------------------------------------------------
 
@@ -373,6 +412,17 @@ describe('revenir aux créneaux', () => {
     expect(appelsCreneaux).toHaveLength(1)
   })
 
+  it('oublie les erreurs signalées sur les coordonnées', async () => {
+    const { tunnel } = await tunnelSurLesCreneaux([PROCHE])
+    tunnel.choisirCreneau(PROCHE)
+    tunnel.envoyer()
+
+    tunnel.revenir()
+    tunnel.choisirCreneau(PROCHE)
+
+    expect(tunnel.etat.erreurs).toEqual({})
+  })
+
   it('garde la saisie et le nombre de places', async () => {
     const { tunnel } = await tunnelSurLesCreneaux([PROCHE])
     tunnel.choisirCreneau(PROCHE)
@@ -504,5 +554,179 @@ describe('choisir le nombre de places', () => {
     tunnel.choisirCreneau(PROCHE)
 
     expect(tunnel.etat.places).toBe(3)
+  })
+})
+
+describe('envoyer sa réservation', () => {
+  it('n’envoie rien et signale chaque champ invalide quand la saisie est incomplète', async () => {
+    const { tunnel, appelsReservation } = await tunnelSurLesCoordonnees()
+    tunnel.saisir('first_name', 'Camille')
+    tunnel.saisir('email', 'camille@')
+
+    tunnel.envoyer()
+
+    expect(appelsReservation).toHaveLength(0)
+    expect(tunnel.etat.ecran).toMatchObject({ nom: 'coordonnees', creneau: PROCHE })
+    expect(Object.keys(tunnel.etat.erreurs).sort()).toEqual(['email', 'last_name'])
+  })
+
+  it('affiche l’écran d’attente pendant l’envoi, puis la confirmation avec le code et le total', async () => {
+    const { tunnel, appelsReservation } = await tunnelSurLesCoordonnees()
+    saisirCamille(tunnel)
+    tunnel.saisir('notes', '  Première fois  ')
+    tunnel.changerPlaces(2)
+
+    tunnel.envoyer()
+
+    expect(tunnel.etat.ecran).toEqual({ nom: 'envoi', cours: TOUR, creneau: PROCHE })
+    expect(tunnel.etat.erreurs).toEqual({})
+    expect(appelsReservation).toHaveLength(1)
+    expect(appelsReservation[0].corps).toEqual({
+      slot_id: 'proche',
+      seats: 2,
+      customer: { first_name: 'Camille', last_name: 'Martin', email: 'camille@exemple.fr', phone: undefined },
+      notes: 'Première fois',
+    })
+
+    appelsReservation[0].resoudre({
+      ok: true,
+      donnees: { booking_id: 'b1', status: 'confirmed', confirmation_code: 'DSY-4821', total_cents: 13000 },
+    })
+    await laisserFiler()
+
+    expect(tunnel.etat.ecran).toEqual({
+      nom: 'confirmation',
+      cours: TOUR,
+      creneau: PROCHE,
+      code: 'DSY-4821',
+      total: 13000,
+      email: 'camille@exemple.fr',
+    })
+  })
+
+  it('n’envoie qu’une seule réservation sur un double-clic', async () => {
+    const { tunnel, appelsReservation } = await tunnelSurLesCoordonnees()
+    saisirCamille(tunnel)
+
+    tunnel.envoyer()
+    tunnel.envoyer()
+
+    expect(appelsReservation).toHaveLength(1)
+  })
+
+  it('ne se laisse pas fermer pendant l’envoi', async () => {
+    const { tunnel, demandes } = await tunnelSurLesCoordonnees()
+    saisirCamille(tunnel)
+    tunnel.envoyer()
+
+    tunnel.fermer()
+
+    expect(demandes).toEqual(['ouverture'])
+    expect(tunnel.etat.ecran.nom).toBe('envoi')
+  })
+})
+
+describe('terminer sa réservation', () => {
+  it('efface la saisie et demande la fermeture', async () => {
+    const { tunnel, demandes } = await tunnelSurLaConfirmation()
+
+    tunnel.terminer()
+
+    expect(tunnel.etat.saisie).toEqual(SAISIE_VIDE)
+    expect(demandes).toEqual(['ouverture', 'fermeture'])
+
+    tunnel.hoteAFerme()
+
+    expect(tunnel.etat.ecran.nom).toBe('bouton')
+  })
+
+  it('efface aussi la saisie quand on ferme l’écran de confirmation', async () => {
+    const { tunnel, demandes } = await tunnelSurLaConfirmation()
+
+    tunnel.fermer()
+
+    expect(tunnel.etat.saisie).toEqual(SAISIE_VIDE)
+    expect(demandes).toEqual(['ouverture', 'fermeture'])
+  })
+
+  it('efface aussi la saisie quand la page hôte referme l’écran de confirmation', async () => {
+    const { tunnel } = await tunnelSurLaConfirmation()
+
+    tunnel.hoteAFerme()
+
+    expect(tunnel.etat.saisie).toEqual(SAISIE_VIDE)
+  })
+
+  it('garde la saisie quand on ferme le tunnel avant la fin', async () => {
+    const { tunnel } = await tunnelSurLesCoordonnees()
+    saisirCamille(tunnel)
+
+    tunnel.fermer()
+    tunnel.hoteAFerme()
+
+    expect(tunnel.etat.saisie.email).toBe('camille@exemple.fr')
+  })
+})
+
+describe('l’envoi échoue', () => {
+  // Transitoire : le point d'entrée traite l'échec qu'on lui rend, jusqu'à
+  // ce que refus et échecs rejoignent le tunnel (tickets 05 et 06).
+  it('ramène aux coordonnées avec la saisie intacte, et rend l’échec', async () => {
+    const { tunnel, appelsReservation } = await tunnelSurLesCoordonnees()
+    saisirCamille(tunnel)
+
+    const envoi = tunnel.envoyer()
+    appelsReservation[0].resoudre({ ok: false, erreur: { statut: 503, code: 'indisponible' } })
+
+    expect(await envoi).toEqual({ statut: 503, code: 'indisponible' })
+    expect(tunnel.etat.ecran).toEqual({ nom: 'coordonnees', cours: TOUR, creneau: PROCHE, placesMaximum: 4 })
+    expect(tunnel.etat.saisie.email).toBe('camille@exemple.fr')
+  })
+
+  it('fait apparaître le téléphone en erreur quand l’atelier l’exige désormais', async () => {
+    const { tunnel, appelsReservation } = await tunnelSurLesCoordonnees()
+    saisirCamille(tunnel)
+
+    const envoi = tunnel.envoyer()
+    appelsReservation[0].resoudre({ ok: false, erreur: { statut: 422, code: 'phone_required' } })
+
+    expect(await envoi).toBeNull()
+    expect(tunnel.etat.ecran.nom).toBe('coordonnees')
+    expect(tunnel.etat.telephoneDemande).toBe(true)
+    expect(Object.keys(tunnel.etat.erreurs)).toEqual(['phone'])
+    expect(tunnel.etat.saisie.email).toBe('camille@exemple.fr')
+  })
+})
+
+describe('la page hôte referme le tunnel pendant l’envoi', () => {
+  // Transitoire : la confirmation est perdue. Le ticket 07 la garde en
+  // attente pour la prochaine ouverture.
+  it('reste fermé quand la réponse arrive', async () => {
+    const { tunnel, appelsReservation } = await tunnelSurLesCoordonnees()
+    saisirCamille(tunnel)
+    tunnel.envoyer()
+
+    tunnel.hoteAFerme()
+    appelsReservation[0].resoudre({
+      ok: true,
+      donnees: { booking_id: 'b1', status: 'confirmed', confirmation_code: 'DSY-4821', total_cents: 6500 },
+    })
+    await laisserFiler()
+
+    expect(tunnel.etat.ecran.nom).toBe('bouton')
+  })
+
+  it('n’envoie pas une seconde réservation si on rouvre le tunnel avant la réponse', async () => {
+    const { tunnel, appelsReservation } = await tunnelSurLesCoordonnees()
+    saisirCamille(tunnel)
+    tunnel.envoyer()
+    tunnel.hoteAFerme()
+
+    tunnel.ouvrir()
+    tunnel.choisirCours(TOUR)
+    tunnel.choisirCreneau(PROCHE)
+    tunnel.envoyer()
+
+    expect(appelsReservation).toHaveLength(1)
   })
 })

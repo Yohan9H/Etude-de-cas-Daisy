@@ -17,19 +17,15 @@ import { hoteAutonome, hoteIframe } from './hote'
 
 // --- L'état ------------------------------------------------------------------
 
-// Le tunnel décide s'il est ouvert et porte les écrans des cours, des
-// créneaux et des coordonnées. Les écrans qui suivent ne l'ont pas encore
+// Le tunnel décide s'il est ouvert et porte tous les écrans, de la liste des
+// cours à la confirmation. Seuls les écrans de refus ne l'ont pas encore
 // rejoint : quand l'un d'eux est affiché, il est noté ici et passe devant
-// l'écran du tunnel, qui reste sur les coordonnées ou, après un refus, sur
-// les créneaux du cours. Ce type disparaît quand l'envoi et les refus auront
-// rejoint le tunnel (tickets 04 et 05).
+// l'écran du tunnel, qui est alors sur les créneaux du cours. Ce type
+// disparaît quand les refus auront rejoint le tunnel (ticket 05).
 let tunnel: Tunnel
 
+// Le refus n'est pas une erreur technique : c'est un écran à part entière.
 type Ecran =
-  | { nom: 'envoi'; cours: Course; creneau: Slot }
-  | { nom: 'confirme'; creneau: Slot; code: string; total: number }
-
-  // Le refus n'est pas une erreur technique : c'est un écran à part entière.
   | { nom: 'place-partie'; cours: Course; creneau: Slot; restantes: number }
   | { nom: 'creneau-annule'; cours: Course }
 
@@ -39,19 +35,9 @@ type Etat = {
 
   studio: Studio | null
 
-  erreurs: Partial<Record<keyof Saisie, string>>
-
   // Erreur qui ne porte sur aucun champ en particulier (réseau, 429, 500).
+  // Transitoire : rejoint le tunnel au ticket 06.
   erreurEnvoi: string | null
-
-  // Le serveur peut exiger un téléphone alors que /studio disait le contraire :
-  // l'artisan a pu changer sa politique après le chargement de la page.
-  // Transitoire : rejoint `telephoneDemande` du tunnel au ticket 06.
-  telephoneExige: boolean
-
-  // Verrou. La création met 1,5 à 4 s : sans lui, un double-clic crée
-  // deux réservations.
-  envoiEnCours: boolean
 }
 
 const etat: Etat = {
@@ -59,10 +45,7 @@ const etat: Etat = {
 
   studio: null,
 
-  erreurs: {},
   erreurEnvoi: null,
-  telephoneExige: false,
-  envoiEnCours: false,
 }
 
 const racine = document.getElementById('app')!
@@ -336,71 +319,53 @@ function placesRestantes(creneau: Slot): string | null {
 type DefinitionChamp = {
   cle: keyof Saisie
   libelle: string
-  obligatoire: boolean
 
   type?: string
   autocomplete?: string
   inputmode?: string
   multiligne?: boolean
   aide?: string
-
-  // Un message par champ : un gabarit du type « {libellé} est nécessaire »
-  // donne « Nom est nécessaire », qui n'est pas du français.
-  siManquant?: string
 }
 
 // Les champs demandés dépendent de la politique de l'atelier : le téléphone
-// n'apparaît que si le tunnel le demande, ou si le serveur l'a réclamé en
-// cours de route (voir `telephoneExige`). Un champ en moins à l'étape où
-// on perd 60 % des gens, c'est la modification la plus rentable du tunnel.
+// n'apparaît que si le tunnel le demande. Un champ en moins à l'étape où on
+// perd 60 % des gens, c'est la modification la plus rentable du tunnel.
 function champsDemandes(): DefinitionChamp[] {
   const champs: DefinitionChamp[] = [
     {
       cle: 'first_name',
       libelle: 'Prénom',
-      obligatoire: true,
       autocomplete: 'given-name',
-      siManquant: 'Indiquez votre prénom.',
     },
     {
       cle: 'last_name',
       libelle: 'Nom',
-      obligatoire: true,
       autocomplete: 'family-name',
-      siManquant: 'Indiquez votre nom.',
     },
     {
       cle: 'email',
       libelle: 'Email',
-      obligatoire: true,
       type: 'email',
       autocomplete: 'email',
       inputmode: 'email',
       aide: 'Votre confirmation y sera envoyée.',
-      siManquant: 'Indiquez votre adresse email, la confirmation y sera envoyée.',
     },
   ]
 
-  if (tunnel.etat.telephoneDemande || etat.telephoneExige) {
+  if (tunnel.etat.telephoneDemande) {
     champs.push({
       cle: 'phone',
       libelle: 'Téléphone',
-      obligatoire: true,
       type: 'tel',
       autocomplete: 'tel',
       inputmode: 'tel',
       aide: 'En cas de changement de dernière minute.',
-
-      // On dit pourquoi : un champ obligatoire sans raison est un champ qu'on
-      // abandonne, à l'étape où on perd déjà 60 % des gens.
-      siManquant: 'L’atelier a besoin d’un numéro pour vous prévenir en cas de changement.',
     })
   }
 
   champs.push({
     cle: 'notes',
     libelle: 'Précisions (facultatif)',
-    obligatoire: false,
     multiligne: true,
   })
 
@@ -441,7 +406,7 @@ function champ(definition: DefinitionChamp): HTMLElement {
     saisie.spellcheck = false
   }
 
-  const erreur = etat.erreurs[definition.cle]
+  const erreur = tunnel.etat.erreurs[definition.cle]
 
   if (erreur) {
     saisie.setAttribute('aria-invalid', 'true')
@@ -656,8 +621,7 @@ function ecranCoordonnees(cours: Course, creneau: Slot, placesMaximum: number): 
 
   zone.appendChild(
     enteteTunnel('Vos coordonnées', () => {
-      // Transitoire : les erreurs rejoignent le tunnel aux tickets 04 et 06.
-      etat.erreurs = {}
+      // Transitoire : le bandeau d'erreur rejoint le tunnel au ticket 06.
       etat.erreurEnvoi = null
 
       tunnel.revenir()
@@ -741,7 +705,7 @@ function ecranEnvoi(cours: Course, creneau: Slot): HTMLElement {
   return zone
 }
 
-function ecranConfirme(creneau: Slot, code: string, total: number): HTMLElement {
+function ecranConfirmation(creneau: Slot, code: string, total: number, email: string): HTMLElement {
   const zone = creer('div', 'tunnel')
   const corps = creer('div', 'tunnel-corps')
   const bande = creer('div', 'bande confirmation')
@@ -759,7 +723,7 @@ function ecranConfirme(creneau: Slot, code: string, total: number): HTMLElement 
     creer(
       'p',
       'confirmation-detail',
-      `Un email de confirmation vient de partir à ${tunnel.etat.saisie.email}.`,
+      `Un email de confirmation vient de partir à ${email}.`,
     ),
   )
 
@@ -779,18 +743,8 @@ function ecranConfirme(creneau: Slot, code: string, total: number): HTMLElement 
 
   const fermer = creer('button', 'bouton-principal', 'Terminer')
 
-  fermer.addEventListener('click', () => {
-    // La réservation est faite : on ne garde pas les coordonnées pour la
-    // prochaine ouverture du widget. Transitoire : `terminer` efface la
-    // saisie dans le tunnel au ticket 04.
-    for (const cle of Object.keys(tunnel.etat.saisie) as (keyof Saisie)[]) {
-      tunnel.saisir(cle, '')
-    }
-    etat.erreurs = {}
-    etat.erreurEnvoi = null
-
-    tunnel.fermer()
-  })
+  // Le tunnel efface la saisie : la réservation est faite.
+  fermer.addEventListener('click', () => tunnel.terminer())
   bande.appendChild(fermer)
 
   corps.appendChild(bande)
@@ -939,46 +893,46 @@ function dessiner(): void {
   etatDessine = tunnel.etat
   vider(racine)
 
-  if (tunnel.etat.ecran.nom === 'bouton') {
+  const ecran = tunnel.etat.ecran
+
+  if (ecran.nom === 'bouton') {
     racine.appendChild(ecranBouton())
     return
   }
 
-  if (etat.ecran === null) {
-    const ecran = tunnel.etat.ecran
-
-    if (ecran.nom === 'creneaux') {
-      racine.appendChild(ecranCreneaux(ecran.cours))
-      return
-    }
-
-    if (ecran.nom === 'coordonnees') {
-      racine.appendChild(ecranCoordonnees(ecran.cours, ecran.creneau, ecran.placesMaximum))
-      return
-    }
-
-    racine.appendChild(ecranCours())
-    return
-  }
-
-  if (etat.ecran.nom === 'envoi') {
-    racine.appendChild(ecranEnvoi(etat.ecran.cours, etat.ecran.creneau))
-    return
-  }
-
-  if (etat.ecran.nom === 'confirme') {
-    racine.appendChild(ecranConfirme(etat.ecran.creneau, etat.ecran.code, etat.ecran.total))
-    return
-  }
-
-  if (etat.ecran.nom === 'place-partie') {
+  if (etat.ecran?.nom === 'place-partie') {
     racine.appendChild(
       ecranPlacePartie(etat.ecran.cours, etat.ecran.creneau, etat.ecran.restantes),
     )
     return
   }
 
-  racine.appendChild(ecranCreneauAnnule(etat.ecran.cours))
+  if (etat.ecran?.nom === 'creneau-annule') {
+    racine.appendChild(ecranCreneauAnnule(etat.ecran.cours))
+    return
+  }
+
+  if (ecran.nom === 'creneaux') {
+    racine.appendChild(ecranCreneaux(ecran.cours))
+    return
+  }
+
+  if (ecran.nom === 'coordonnees') {
+    racine.appendChild(ecranCoordonnees(ecran.cours, ecran.creneau, ecran.placesMaximum))
+    return
+  }
+
+  if (ecran.nom === 'envoi') {
+    racine.appendChild(ecranEnvoi(ecran.cours, ecran.creneau))
+    return
+  }
+
+  if (ecran.nom === 'confirmation') {
+    racine.appendChild(ecranConfirmation(ecran.creneau, ecran.code, ecran.total, ecran.email))
+    return
+  }
+
+  racine.appendChild(ecranCours())
 }
 
 // Une frappe ne change que la saisie : on NE redessine PAS, reconstruire le
@@ -994,6 +948,13 @@ function surChangement(): void {
   }
 
   dessiner()
+
+  // Le redessin a détruit l'élément qui avait le focus. Quand des erreurs
+  // apparaissent, on le donne au premier champ en erreur, sinon la personne
+  // ne sait pas où regarder.
+  if (apres.erreurs !== avant?.erreurs && Object.keys(apres.erreurs).length > 0) {
+    racine.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus()
+  }
 }
 
 function seuleLaSaisieAChange(avant: EtatTunnel, apres: EtatTunnel): boolean {
@@ -1002,87 +963,16 @@ function seuleLaSaisieAChange(avant: EtatTunnel, apres: EtatTunnel): boolean {
   return avant.saisie !== apres.saisie && cles.every((cle) => cle === 'saisie' || avant[cle] === apres[cle])
 }
 
-// --- Validation --------------------------------------------------------------
+// --- Envoi -------------------------------------------------------------------
 
-// Volontairement permissive : on vérifie qu'il y a un @ entouré de texte et un
-// point après. Les expressions très strictes rejettent de vraies adresses, et
-// le seul test qui fait foi est l'email de confirmation qui arrive ou non.
-function emailPlausible(valeur: string): boolean {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(valeur)
-}
-
-function valider(): Partial<Record<keyof Saisie, string>> {
-  const erreurs: Partial<Record<keyof Saisie, string>> = {}
-
-  for (const definition of champsDemandes()) {
-    const valeur = tunnel.etat.saisie[definition.cle].trim()
-
-    if (definition.obligatoire && !valeur) {
-      erreurs[definition.cle] = definition.siManquant ?? `${definition.libelle} est nécessaire.`
-      continue
-    }
-
-    if (definition.cle === 'email' && valeur && !emailPlausible(valeur)) {
-      erreurs.email = 'Cette adresse ne semble pas valide.'
-    }
-  }
-
-  return erreurs
-}
-
+// Le tunnel valide, verrouille et envoie. Transitoire : il rend ici l'échec
+// qu'il ne traite pas encore, jusqu'aux tickets 05 et 06.
 async function soumettre(cours: Course, creneau: Slot): Promise<void> {
-  // Le verrou. Le bouton disparaît avec l'écran, mais la touche Entrée ou un
-  // double-clic rapide peuvent déclencher deux appels avant le redessin.
-  if (etat.envoiEnCours) return
-
   etat.erreurEnvoi = null
-  etat.erreurs = valider()
 
-  if (Object.keys(etat.erreurs).length > 0) {
-    dessiner()
+  const echec = await tunnel.envoyer()
 
-    // Le redessin a détruit l'élément qui avait le focus. On le redonne au
-    // premier champ en erreur, sinon l'utilisateur ne sait pas où regarder.
-    racine.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus()
-    return
-  }
-
-  etat.envoiEnCours = true
-  etat.ecran = { nom: 'envoi', cours, creneau }
-  dessiner()
-
-  const { saisie, places } = tunnel.etat
-
-  const resultat = await postBooking({
-    slot_id: creneau.slot_id,
-
-    seats: places,
-
-    customer: {
-      first_name: saisie.first_name.trim(),
-      last_name: saisie.last_name.trim(),
-      email: saisie.email.trim(),
-      phone: saisie.phone.trim() || undefined,
-    },
-
-    notes: saisie.notes.trim() || undefined,
-  })
-
-  etat.envoiEnCours = false
-
-  if (resultat.ok) {
-    etat.ecran = {
-      nom: 'confirme',
-      creneau,
-      code: resultat.donnees.confirmation_code,
-      total: resultat.donnees.total_cents,
-    }
-
-    dessiner()
-    return
-  }
-
-  traiterEchec(cours, creneau, resultat.erreur)
+  if (echec) traiterEchec(cours, creneau, echec)
 }
 
 function traiterEchec(cours: Course, creneau: Slot, erreur: ErreurApi): void {
@@ -1106,22 +996,7 @@ function traiterEchec(cours: Course, creneau: Slot, erreur: ErreurApi): void {
   }
 
   // --- On retourne au formulaire, saisie intacte --------------------------
-  // Le tunnel est resté sur les coordonnées pendant l'envoi.
-  etat.ecran = null
-
-  if (erreur.code === 'phone_required') {
-    // /studio disait que le téléphone n'était pas demandé, le serveur dit
-    // l'inverse : l'artisan a changé sa politique depuis le chargement.
-    // On fait apparaître le champ plutôt que d'afficher une erreur opaque.
-    etat.telephoneExige = true
-    etat.erreurs = {
-      phone: 'L’atelier demande désormais un numéro de téléphone pour réserver.',
-    }
-
-    dessiner()
-    racine.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus()
-    return
-  }
+  // Le tunnel y est déjà revenu.
 
   if (erreur.code === 'too_many_seats') {
     const plafond = etat.studio?.booking_policy.max_seats_per_booking ?? 1
@@ -1263,7 +1138,7 @@ async function demarrer(): Promise<void> {
 
   tunnel = creerTunnel({
     atelier: resultat.donnees,
-    api: { getCourses, getSlots },
+    api: { getCourses, getSlots, postBooking },
     hote,
     horloge: () => new Date(),
   })
@@ -1281,10 +1156,6 @@ async function demarrer(): Promise<void> {
   // l'isolation, et il se paie ici.
   window.addEventListener('keydown', (evenement) => {
     if (evenement.key !== 'Escape') return
-
-    // Pendant l'envoi, fermer ne servirait à rien : la requête est partie et
-    // la réservation sera créée. Mieux vaut laisser l'attente se terminer.
-    if (etat.ecran?.nom === 'envoi') return
 
     tunnel.fermer()
   })

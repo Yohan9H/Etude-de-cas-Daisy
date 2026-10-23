@@ -160,12 +160,14 @@ export function getSlots(courseId: string, depuis: Date, jusqua: Date) {
   return requete<{ slots: Slot[] }>(`/courses/${courseId}/slots?${params}`)
 }
 
-export function postBooking(corps: {
+export type CorpsReservation = {
   slot_id: string
   seats: number
   customer: Customer
   notes?: string
-}) {
+}
+
+export function postBooking(corps: CorpsReservation) {
   return requete<Booking>('/bookings', {
     method: 'POST',
     body: JSON.stringify(corps),
