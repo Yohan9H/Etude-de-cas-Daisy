@@ -14,3 +14,8 @@ Spec : `.scratch/tunnel/spec.md`
 - [ ] Dans tous les cas, l'écran est celui des coordonnées et la saisie est intacte
 - [ ] Les tests vérifient le type d'issue et l'écran, pas les phrases exactes
 - [ ] Vérifié à la main via les scénarios correspondants de la page de contrôle du faux serveur
+
+## Comments
+
+- Ticket 04 (`f45bb51`) : `phone_required` est déjà traité dans le tunnel (`telephoneDemande` à vrai, erreur sur `phone`, test « fait apparaître le téléphone en erreur quand l'atelier l'exige désormais »). Il reste la vérification dans la démo de ce cas sur le site hostile, et le passage des autres échecs (`too_many_seats`, 429, absence de réponse, autres) du point d'entrée au tunnel. `envoyer` rend aujourd'hui l'erreur à `main.ts` (`soumettre`, `traiterEchec`) : ce retour disparaît avec ce ticket et le 05.
+

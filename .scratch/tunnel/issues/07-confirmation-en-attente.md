@@ -14,3 +14,9 @@ Corrige le bug de la confirmation perdue.
 - [ ] L'hôte ferme pendant l'envoi, puis l'envoi échoue : à la réouverture, le comportement normal s'applique, saisie intacte
 - [ ] `ouvrir` sans confirmation en attente, après une fermeture en cours de route, affiche la liste des cours avec la saisie conservée
 - [ ] Vérifié à la main dans la démo avec une réponse lente du faux serveur
+
+## Comments
+
+- Ticket 04 (`f45bb51`) : quand la page hôte referme pendant l'envoi, `envoyer` ignore la réponse (garde « l'écran n'est plus `envoi` »). Le test « la page hôte referme le tunnel pendant l'envoi › reste fermé quand la réponse arrive » fige cette perte : à inverser ici.
+- Revue du 04 : le verrou d'envoi tient tant que la réponse n'est pas arrivée. Rouvert entre-temps, un second envoi est ignoré sans retour visible. Une fois la première réponse jetée, le verrou se relâche et un nouvel envoi crée une seconde réservation. Garder la confirmation en attente règle le second point ; le premier mérite un écran (l'attente) plutôt qu'un clic muet.
+
