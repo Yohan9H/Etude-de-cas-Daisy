@@ -34,4 +34,11 @@ Après chaque fermeture, rouvrir : le tunnel repart de la liste des cours.
 
 ## Le faux serveur
 
-Sa page de contrôle, http://localhost:3001/__mock, choisit le scénario de réponse (refus, annulation, téléphone exigé, 429…) ; la liste fait foi dans `SCENARIOS` de `mock/server.mjs`. Un agent change de scénario sans navigateur : `curl "http://localhost:3001/__mock/set?scenario=<nom>"` (réponse 302). Remettre `ok` avant d'arrêter la démo. Les tests du tunnel couvrent ces cas plus vite ; la démo sert à voir le rendu.
+Sa page de contrôle, http://localhost:3001/__mock, choisit le scénario de réponse (refus, annulation, téléphone exigé, 429…) ; la liste fait foi dans `SCENARIOS` de `mock/server.mjs`. Un agent change de scénario sans navigateur : `curl "http://localhost:3001/__mock/set?scenario=<nom>"` (réponse 302), entre deux essais, jamais depuis un script exécuté dans la page. Un script interrompu laisse le serveur sur son dernier scénario, et l'essai suivant échoue sans raison apparente. Le scénario actif est rappelé dans la sortie de `npm run demo` (`[mock] ⚠  scénario « … » actif`) à chaque appel. Remettre `ok` avant d'arrêter la démo. Les tests du tunnel couvrent ces cas plus vite ; la démo sert à voir le rendu.
+
+## Piloter le widget
+
+- **Widget seul : par script.** La page est servie par le widget lui-même : un agent la pilote en JavaScript, plus vite et plus sûrement qu'au clic. Remplir un champ, c'est poser `value` puis déclencher `new Event('input')`, sinon le tunnel ne voit pas la saisie. Envoyer, c'est `form.requestSubmit()`. Échap, c'est `window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`. C'est là qu'on vérifie la logique et les scénarios du faux serveur.
+- **Sites de démo : au clic seulement.** L'iframe (5173) n'est pas sur l'origine de la page hôte (4000) : aucun script de la page hôte n'y entre, et `find` ou `read_page` n'y voient rien. On y clique sur des coordonnées lues sur une capture. Un Tab dans un texte tapé part comme un caractère : cliquer sur chaque champ avant de le remplir. Faire défiler la page déplace les boutons : reprendre une capture avant de cliquer. On y vérifie le rendu et l'écho `closed`.
+- **Double-clic** : un vrai double-clic de souris (`double_click`), pas deux `requestSubmit()`. Compter ensuite les `POST /bookings` dans les requêtes réseau de l'onglet.
+
