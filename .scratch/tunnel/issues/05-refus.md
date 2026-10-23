@@ -15,3 +15,18 @@ Corrige le bug de « Voir toutes les dates » qui affiche des créneaux pas enco
 - [ ] `voirToutesLesDates` affiche les créneaux rafraîchis, ou un état de chargement si le rechargement n'est pas terminé (test qui échoue d'abord)
 - [ ] Une réponse de rechargement qui ne correspond plus à l'écran courant ne le perturbe pas
 - [ ] Vérifié à la main via les scénarios « place partie » et « créneau annulé » de la page de contrôle du faux serveur
+
+## Comments
+
+- Frontières relues après le ticket 04. Les tickets 05, 06 et 07 modifient tous trois la suite de l'`await` dans `envoyer` (`src/tunnel.ts`), ainsi que `soumettre` et `traiterEchec` dans `src/main.ts`. Ils se font l'un après l'autre (05, puis 06, puis 07), jamais en parallèle.
+- Ce que ce ticket retire de `main.ts` :
+  - les branches `slot_full` et `slot_cancelled` de `traiterEchec` ;
+  - `rafraichirCreneaux` ;
+  - le type `Ecran` et `etat.ecran` (les écrans de refus passent dans l'`Ecran` du tunnel) ;
+  - la priorité des refus dans `dessiner`.
+- Ce qu'il laisse en place : `envoyer` rend encore les autres échecs au point d'entrée. Ce retour disparaît au ticket 06.
+- Repris de la réponse du ticket 03 :
+  - « Réserver pour N personnes » fait deux changements (`choisirCreneau` puis `changerPlaces`) ;
+  - le créneau d'avant le refus porte des places restantes périmées ;
+  - le bouton et les alternatives ne marchent que parce que le tunnel est revenu sur les créneaux, via `choisirCours`.
+- Sur un refus, le ticket 04 fait encore deux redessins (coordonnées, puis refus) : une seule transition doit suffire ici.
