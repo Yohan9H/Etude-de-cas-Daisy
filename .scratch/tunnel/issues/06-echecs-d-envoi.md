@@ -1,6 +1,6 @@
 # 06 : Échecs d'envoi qui ramènent au formulaire
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: 04, 05
 Spec : `.scratch/tunnel/spec.md`
 
