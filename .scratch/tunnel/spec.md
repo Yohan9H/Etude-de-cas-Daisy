@@ -79,7 +79,7 @@ Pour la personne qui réserve, le tunnel se comporte comme aujourd'hui, sans les
 - **Nombre de places** : conservé et ramené au plafond quand on change de créneau dans le même cours ; remis à 1 quand on change de cours.
 - **Saisie** : gardée par le tunnel, avec la validation et l'exigence de téléphone. Elle survit aux refus et aux fermetures. Elle n'est effacée qu'à la fin d'une réservation (`terminer`, ou `fermer` depuis l'écran de confirmation).
 - **`fermer`** est ignoré pendant l'envoi.
-- **`ouvrir`** affiche la confirmation en attente s'il y en a une ; sinon il affiche la liste des cours et ne charge celle-ci qu'à la première ouverture.
+- **`ouvrir`** affiche la confirmation en attente s'il y en a une ; l'écran d'attente si un envoi n'a pas encore reçu sa réponse ; sinon la liste des cours, qu'il ne charge qu'à la première ouverture.
 - **Confirmation en attente** : si l'hôte referme le tunnel pendant l'envoi et que la réservation réussit, le tunnel garde la confirmation et la montre à la prochaine ouverture ; il ne redemande pas l'ouverture de lui-même.
 - **Textes d'erreur** : repris tels quels de l'implémentation actuelle (traitement des échecs d'envoi et textes d'erreur de chargement). Leur réorganisation appartient à un chantier ultérieur.
 - **Livraison par tranches verticales** : le widget reste fonctionnel après chaque tranche. Première tranche : Vitest, plus un tunnel squelette qui gère `ouvrir`, `fermer`, `hoteAFerme` et le chargement des cours, branché sur le vrai rendu.

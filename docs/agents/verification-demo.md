@@ -30,7 +30,7 @@ Le site hostile met le CSS de la page hôte à l'épreuve ; le widget seul exerc
 
   Le loader traite `cancel` comme une fermeture par la page (voir `public/v1.js`). `dialog.open` vaut encore `true` juste après l'appel ; vérifier sur une capture que le widget est revenu au bouton.
 
-Après chaque fermeture, rouvrir : le tunnel repart de la liste des cours.
+Après chaque fermeture, rouvrir : le tunnel repart de la liste des cours. Deux exceptions, après une fermeture par la page hôte pendant l'envoi : rouvert avant la réponse, il remet l'écran d'attente ; après une réservation réussie, il montre la confirmation en attente.
 
 ## Le faux serveur
 

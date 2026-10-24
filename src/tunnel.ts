@@ -36,9 +36,7 @@ export type Ecran =
   | { nom: 'coordonnees'; cours: Course; creneau: Slot; placesMaximum: number; echec?: EchecEnvoi }
   | { nom: 'envoi'; cours: Course; creneau: Slot }
 
-  // `email` est celui de la réservation : la saisie, elle, est effacée dès
-  // qu'on quitte cet écran, avant que l'hôte n'ait confirmé la fermeture.
-  | { nom: 'confirmation'; cours: Course; creneau: Slot; code: string; total: number; email: string }
+  | ({ nom: 'confirmation' } & Confirmation)
 
   // Le refus n'est pas une erreur technique : c'est un écran à part entière.
   // `creneau` porte les places restantes annoncées par le refus, puis par les
@@ -46,6 +44,11 @@ export type Ecran =
   // créneaux ne sont pas rechargés, plutôt que périmées.
   | { nom: 'place-partie'; cours: Course; creneau: Slot; alternatives: Slot[] }
   | { nom: 'creneau-annule'; cours: Course }
+
+// `email` est celui de la réservation : la saisie, elle, est effacée dès
+// qu'on quitte l'écran de confirmation, avant que l'hôte n'ait confirmé la
+// fermeture.
+export type Confirmation = { cours: Course; creneau: Slot; code: string; total: number; email: string }
 
 // Un envoi qui échoue sans être un refus. Le tunnel dit ce qui s'est passé, le
 // rendu choisit les mots.
@@ -102,6 +105,11 @@ export type EtatTunnel = {
   // Un champ en moins à l'étape où on perd 60 % des gens : le téléphone
   // n'est demandé que si l'atelier l'exige.
   telephoneDemande: boolean
+
+  // La réservation a réussi pendant que la page hôte avait refermé le tunnel.
+  // On ne rouvre pas de nous-mêmes : seul un clic de la personne le fait, et
+  // c'est alors elle qu'on lui montre. null sinon.
+  confirmationEnAttente: Confirmation | null
 }
 
 // La spec plafonne la fenêtre à 90 jours, au-delà c'est un 400.
@@ -131,6 +139,7 @@ export function creerTunnel(dependances: {
     saisie: SAISIE_VIDE,
     erreurs: {},
     telephoneDemande: atelier.booking_policy.requires_phone,
+    confirmationEnAttente: null,
   }
   const abonnes = new Set<() => void>()
 
@@ -142,8 +151,8 @@ export function creerTunnel(dependances: {
   // Le verrou d'envoi. La création met 1,5 à 4 s : sans lui, une réservation
   // relancée pendant l'attente en crée une seconde. L'écran d'attente ne
   // suffit pas, la page hôte peut refermer le tunnel et on peut le rouvrir
-  // avant la réponse.
-  let envoiEnCours = false
+  // avant la réponse : on garde de quoi y remettre l'écran d'attente.
+  let envoiEnCours: { cours: Course; creneau: Slot } | null = null
 
   // Le nombre de places vaut pour un cours : on le garde d'un créneau à
   // l'autre, mais on repart d'une place quand le cours change.
@@ -294,6 +303,22 @@ export function creerTunnel(dependances: {
     ouvrir(): void {
       hote.demanderOuverture()
 
+      // Une réservation faite pendant que le tunnel était fermé passe avant
+      // tout : la personne doit savoir qu'elle a sa place. Une fois affichée,
+      // c'est une confirmation comme une autre, effacée de la même façon.
+      if (etat.confirmationEnAttente !== null) {
+        changer({ ecran: { nom: 'confirmation', ...etat.confirmationEnAttente }, confirmationEnAttente: null })
+        return
+      }
+
+      // Rouvert avant la réponse : on retrouve l'attente, et c'est elle qui
+      // affichera la réponse. Sur la liste des cours, un nouvel envoi serait
+      // ignoré sans un mot.
+      if (envoiEnCours !== null) {
+        changer({ ecran: { nom: 'envoi', ...envoiEnCours } })
+        return
+      }
+
       // On ne charge les cours qu'à la première ouverture, pas à la création.
       // Le bouton est affiché à tous les visiteurs du site de l'artisan ; la
       // liste n'intéresse que ceux qui cliquent. Sur un trafic à 60 % mobile,
@@ -368,7 +393,7 @@ export function creerTunnel(dependances: {
 
     async envoyer(): Promise<void> {
       const ecran = etat.ecran
-      if (ecran.nom !== 'coordonnees' || envoiEnCours) return
+      if (ecran.nom !== 'coordonnees' || envoiEnCours !== null) return
 
       const { cours, creneau } = ecran
       const { saisie, places } = etat
@@ -382,7 +407,7 @@ export function creerTunnel(dependances: {
 
       const email = saisie.email.trim()
 
-      envoiEnCours = true
+      envoiEnCours = { cours, creneau }
       changer({ ecran: { nom: 'envoi', cours, creneau }, erreurs: {} })
 
       let resultat: Resultat<Booking>
@@ -400,27 +425,36 @@ export function creerTunnel(dependances: {
           notes: saisie.notes.trim() || undefined,
         })
       } finally {
-        envoiEnCours = false
+        envoiEnCours = null
       }
 
-      // La page hôte a refermé le tunnel pendant l'attente. Transitoire : la
-      // confirmation est perdue ; le ticket 07 la garde pour la prochaine
-      // ouverture.
-      if (etat.ecran.nom !== 'envoi') return
+      // La page hôte a pu refermer le tunnel pendant l'attente : la réponse n'a
+      // alors plus d'écran où s'afficher.
+      const attenteAffichee = etat.ecran.nom === 'envoi'
 
       if (resultat.ok) {
-        changer({
-          ecran: {
-            nom: 'confirmation',
-            cours,
-            creneau,
-            code: resultat.donnees.confirmation_code,
-            total: resultat.donnees.total_cents,
-            email,
-          },
-        })
+        const confirmation: Confirmation = {
+          cours,
+          creneau,
+          code: resultat.donnees.confirmation_code,
+          total: resultat.donnees.total_cents,
+          email,
+        }
+
+        // La réservation existe : on la garde pour la prochaine ouverture
+        // plutôt que de la perdre.
+        if (!attenteAffichee) {
+          changer({ confirmationEnAttente: confirmation })
+          return
+        }
+
+        changer({ ecran: { nom: 'confirmation', ...confirmation } })
         return
       }
+
+      // Un échec, lui, n'a plus personne à qui s'afficher : à la réouverture,
+      // la personne retrouve sa saisie comme après toute fermeture.
+      if (!attenteAffichee) return
 
       // Un refus : les créneaux affichés datent d'avant la saisie, on les
       // recharge pour ne proposer que des dates qui existent encore.

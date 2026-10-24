@@ -666,6 +666,18 @@ describe('terminer sa réservation', () => {
 
     expect(tunnel.etat.saisie.email).toBe('camille@exemple.fr')
   })
+
+  it('repart de la liste des cours, saisie conservée, en rouvrant après avoir fermé avant la fin', async () => {
+    const { tunnel } = await tunnelSurLesCoordonnees()
+    saisirCamille(tunnel)
+    tunnel.fermer()
+    tunnel.hoteAFerme()
+
+    tunnel.ouvrir()
+
+    expect(tunnel.etat.ecran).toEqual({ nom: 'cours' })
+    expect(tunnel.etat.saisie.email).toBe('camille@exemple.fr')
+  })
 })
 
 describe('l’envoi échoue', () => {
@@ -976,10 +988,23 @@ describe('les créneaux rechargés après un refus arrivent en retard', () => {
 })
 
 describe('la page hôte referme le tunnel pendant l’envoi', () => {
-  // Transitoire : la confirmation est perdue. Le ticket 07 la garde en
-  // attente pour la prochaine ouverture.
-  it('reste fermé quand la réponse arrive', async () => {
-    const { tunnel, appelsReservation } = await tunnelSurLesCoordonnees()
+  // La réservation de Camille a réussi pendant que le tunnel était fermé.
+  async function tunnelAvecUneConfirmationEnAttente() {
+    const outils = await tunnelSurLesCoordonnees()
+    saisirCamille(outils.tunnel)
+    outils.tunnel.envoyer()
+    outils.tunnel.hoteAFerme()
+    outils.appelsReservation[0].resoudre({
+      ok: true,
+      donnees: { booking_id: 'b1', status: 'confirmed', confirmation_code: 'DSY-4821', total_cents: 6500 },
+    })
+    await laisserFiler()
+
+    return outils
+  }
+
+  it('garde la confirmation en attente quand la réservation réussit, sans rouvrir le tunnel', async () => {
+    const { tunnel, appelsReservation, demandes } = await tunnelSurLesCoordonnees()
     saisirCamille(tunnel)
     tunnel.envoyer()
 
@@ -991,19 +1016,109 @@ describe('la page hôte referme le tunnel pendant l’envoi', () => {
     await laisserFiler()
 
     expect(tunnel.etat.ecran.nom).toBe('bouton')
+    expect(tunnel.etat.confirmationEnAttente).toMatchObject({ code: 'DSY-4821', total: 6500 })
+    expect(demandes).toEqual(['ouverture'])
   })
 
-  it('n’envoie pas une seconde réservation si on rouvre le tunnel avant la réponse', async () => {
+  it('voit sa confirmation, avec le code et le total, en rouvrant le tunnel', async () => {
+    const { tunnel, demandes } = await tunnelAvecUneConfirmationEnAttente()
+
+    tunnel.ouvrir()
+
+    expect(demandes).toEqual(['ouverture', 'ouverture'])
+    expect(tunnel.etat.ecran).toEqual({
+      nom: 'confirmation',
+      cours: TOUR,
+      creneau: PROCHE,
+      code: 'DSY-4821',
+      total: 6500,
+      email: 'camille@exemple.fr',
+    })
+  })
+
+  it('efface la saisie et la confirmation en attente en terminant', async () => {
+    const { tunnel, demandes } = await tunnelAvecUneConfirmationEnAttente()
+    tunnel.ouvrir()
+
+    tunnel.terminer()
+    tunnel.hoteAFerme()
+
+    expect(demandes).toEqual(['ouverture', 'ouverture', 'fermeture'])
+    expect(tunnel.etat.saisie).toEqual(SAISIE_VIDE)
+    expect(tunnel.etat.confirmationEnAttente).toBeNull()
+
+    tunnel.ouvrir()
+
+    expect(tunnel.etat.ecran).toEqual({ nom: 'cours' })
+  })
+
+  it('efface la saisie et la confirmation en attente en fermant la confirmation', async () => {
+    const { tunnel } = await tunnelAvecUneConfirmationEnAttente()
+    tunnel.ouvrir()
+
+    tunnel.fermer()
+    tunnel.hoteAFerme()
+
+    expect(tunnel.etat.saisie).toEqual(SAISIE_VIDE)
+    expect(tunnel.etat.confirmationEnAttente).toBeNull()
+
+    tunnel.ouvrir()
+
+    expect(tunnel.etat.ecran).toEqual({ nom: 'cours' })
+  })
+
+  it('retrouve la liste des cours et sa saisie intacte en rouvrant, quand l’envoi a échoué', async () => {
+    const { tunnel, appelsReservation } = await tunnelSurLesCoordonnees()
+    saisirCamille(tunnel)
+    tunnel.envoyer()
+
+    tunnel.hoteAFerme()
+    appelsReservation[0].resoudre({ ok: false, erreur: { statut: 503, code: 'indisponible' } })
+    await laisserFiler()
+
+    expect(tunnel.etat.ecran.nom).toBe('bouton')
+    expect(tunnel.etat.confirmationEnAttente).toBeNull()
+
+    tunnel.ouvrir()
+
+    expect(tunnel.etat.ecran).toEqual({ nom: 'cours' })
+    expect(tunnel.etat.saisie.email).toBe('camille@exemple.fr')
+  })
+
+  it('ne voit pas le refus arrivé pendant que le tunnel était fermé, en le rouvrant', async () => {
+    const { tunnel, appelsReservation } = await tunnelSurLesCoordonnees()
+    saisirCamille(tunnel)
+    tunnel.envoyer()
+
+    tunnel.hoteAFerme()
+    appelsReservation[0].resoudre({ ok: false, erreur: { statut: 409, code: 'slot_full', available: 0 } })
+    await laisserFiler()
+    tunnel.ouvrir()
+
+    expect(tunnel.etat.ecran).toEqual({ nom: 'cours' })
+    expect(tunnel.etat.saisie.email).toBe('camille@exemple.fr')
+  })
+
+  it('retrouve l’écran d’attente en rouvrant avant la réponse, puis sa confirmation', async () => {
     const { tunnel, appelsReservation } = await tunnelSurLesCoordonnees()
     saisirCamille(tunnel)
     tunnel.envoyer()
     tunnel.hoteAFerme()
 
     tunnel.ouvrir()
-    tunnel.choisirCours(TOUR)
-    tunnel.choisirCreneau(PROCHE)
-    tunnel.envoyer()
 
+    expect(tunnel.etat.ecran).toEqual({ nom: 'envoi', cours: TOUR, creneau: PROCHE })
+
+    tunnel.envoyer()
     expect(appelsReservation).toHaveLength(1)
+
+    appelsReservation[0].resoudre({
+      ok: true,
+      donnees: { booking_id: 'b1', status: 'confirmed', confirmation_code: 'DSY-4821', total_cents: 6500 },
+    })
+    await laisserFiler()
+
+    expect(tunnel.etat.ecran).toMatchObject({ nom: 'confirmation', code: 'DSY-4821' })
+    expect(tunnel.etat.confirmationEnAttente).toBeNull()
   })
 })
