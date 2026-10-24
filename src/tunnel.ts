@@ -31,8 +31,9 @@ export type Ecran =
   | { nom: 'cours' }
   | { nom: 'creneaux'; cours: Course }
   // `placesMaximum` est la borne des places pour ce créneau : l'écran n'a pas
-  // à la recalculer.
-  | { nom: 'coordonnees'; cours: Course; creneau: Slot; placesMaximum: number }
+  // à la recalculer. `echec` : le dernier envoi a échoué sans être un refus.
+  // Il disparaît avec l'écran, au retour comme au prochain envoi.
+  | { nom: 'coordonnees'; cours: Course; creneau: Slot; placesMaximum: number; echec?: EchecEnvoi }
   | { nom: 'envoi'; cours: Course; creneau: Slot }
 
   // `email` est celui de la réservation : la saisie, elle, est effacée dès
@@ -45,6 +46,17 @@ export type Ecran =
   // créneaux ne sont pas rechargés, plutôt que périmées.
   | { nom: 'place-partie'; cours: Course; creneau: Slot; alternatives: Slot[] }
   | { nom: 'creneau-annule'; cours: Course }
+
+// Un envoi qui échoue sans être un refus. Le tunnel dit ce qui s'est passé, le
+// rendu choisit les mots.
+export type EchecEnvoi =
+  // `places` : la demande une fois ramenée, figée au moment de l'échec.
+  | { type: 'trop-de-places'; plafond: number; places: number }
+  | { type: 'trop-de-requetes' }
+
+  // On ne sait pas si la réservation a été créée.
+  | { type: 'sans-reponse' }
+  | { type: 'indisponible' }
 
 // Un chargement a son propre état, à côté de l'écran : la liste des cours et
 // celle des créneaux ne partagent pas le leur. Sinon le « Chargement… » des
@@ -229,6 +241,29 @@ export function creerTunnel(dependances: {
     return null
   }
 
+  function echecEnvoi(erreur: ErreurApi, demande: number, creneau: Slot): EchecEnvoi {
+    // On ramène la demande dans les limites plutôt que de laisser la personne
+    // deviner combien elle a le droit de réserver. Le plafond est celui chargé
+    // au démarrage, peut-être périmé : bug connu, hors périmètre
+    // (`.scratch/traduction-erreurs-api/issues/01-…`).
+    if (erreur.code === 'too_many_seats') {
+      return {
+        type: 'trop-de-places',
+        plafond: atelier.booking_policy.max_seats_per_booking,
+        places: bornerPlaces(demande, creneau),
+      }
+    }
+
+    if (erreur.statut === 429) return { type: 'trop-de-requetes' }
+
+    // Pas de réponse du tout : la réservation a peut-être été créée malgré
+    // tout. L'API n'a pas de clé d'idempotence, et pas d'endpoint pour
+    // vérifier. On ne réessaie donc JAMAIS tout seul, et on le dit honnêtement.
+    if (erreur.statut === null) return { type: 'sans-reponse' }
+
+    return { type: 'indisponible' }
+  }
+
   // Deux limites se cumulent : celle que l'atelier s'impose, et ce qui reste
   // réellement sur ce créneau. C'est la plus basse qui s'applique, jamais
   // moins d'une place. Seul endroit où cette borne est écrite.
@@ -331,20 +366,18 @@ export function creerTunnel(dependances: {
       changer({ saisie: { ...etat.saisie, [champ]: valeur } })
     },
 
-    // Transitoire : rend l'échec d'envoi que le tunnel ne traite pas encore,
-    // pour que le point d'entrée affiche le message qui convient. Disparaît
-    // quand les échecs d'envoi rejoignent le tunnel (ticket 06).
-    async envoyer(): Promise<ErreurApi | null> {
+    async envoyer(): Promise<void> {
       const ecran = etat.ecran
-      if (ecran.nom !== 'coordonnees' || envoiEnCours) return null
+      if (ecran.nom !== 'coordonnees' || envoiEnCours) return
 
       const { cours, creneau } = ecran
       const { saisie, places } = etat
       const erreurs = valider(saisie, etat.telephoneDemande)
 
       if (Object.keys(erreurs).length > 0) {
-        changer({ erreurs })
-        return null
+        // L'échec du dernier envoi ne vaut plus : on en tente un nouveau.
+        changer({ ecran: { nom: 'coordonnees', cours, creneau, placesMaximum: ecran.placesMaximum }, erreurs })
+        return
       }
 
       const email = saisie.email.trim()
@@ -373,7 +406,7 @@ export function creerTunnel(dependances: {
       // La page hôte a refermé le tunnel pendant l'attente. Transitoire : la
       // confirmation est perdue ; le ticket 07 la garde pour la prochaine
       // ouverture.
-      if (etat.ecran.nom !== 'envoi') return null
+      if (etat.ecran.nom !== 'envoi') return
 
       if (resultat.ok) {
         changer({
@@ -386,7 +419,7 @@ export function creerTunnel(dependances: {
             email,
           },
         })
-        return null
+        return
       }
 
       // Un refus : les créneaux affichés datent d'avant la saisie, on les
@@ -396,7 +429,7 @@ export function creerTunnel(dependances: {
       if (refus) {
         changer({ ecran: refus, creneaux: { etat: 'en-chargement' } })
         chargerCreneaux(cours)
-        return null
+        return
       }
 
       // On retourne au formulaire, saisie intacte.
@@ -411,11 +444,15 @@ export function creerTunnel(dependances: {
           telephoneDemande: true,
           erreurs: { phone: 'L’atelier demande désormais un numéro de téléphone pour réserver.' },
         })
-        return null
+        return
       }
 
-      changer({ ecran: coordonnees })
-      return resultat.erreur
+      const echec = echecEnvoi(resultat.erreur, places, creneau)
+
+      changer({
+        ecran: { ...coordonnees, echec },
+        places: echec.type === 'trop-de-places' ? echec.places : places,
+      })
     },
 
     revenir(): void {

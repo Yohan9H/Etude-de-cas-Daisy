@@ -669,31 +669,109 @@ describe('terminer sa réservation', () => {
 })
 
 describe('l’envoi échoue', () => {
-  // Transitoire : le point d'entrée traite l'échec qu'on lui rend, jusqu'à
-  // ce que les échecs d'envoi rejoignent le tunnel (ticket 06).
-  it('ramène aux coordonnées avec la saisie intacte, et rend l’échec', async () => {
+  it('ramène aux coordonnées, saisie intacte, quand le service est indisponible', async () => {
     const { tunnel, appelsReservation } = await tunnelSurLesCoordonnees()
     saisirCamille(tunnel)
 
-    const envoi = tunnel.envoyer()
+    tunnel.envoyer()
     appelsReservation[0].resoudre({ ok: false, erreur: { statut: 503, code: 'indisponible' } })
+    await laisserFiler()
 
-    expect(await envoi).toEqual({ statut: 503, code: 'indisponible' })
-    expect(tunnel.etat.ecran).toEqual({ nom: 'coordonnees', cours: TOUR, creneau: PROCHE, placesMaximum: 4 })
+    expect(tunnel.etat.ecran).toEqual({
+      nom: 'coordonnees',
+      cours: TOUR,
+      creneau: PROCHE,
+      placesMaximum: 4,
+      echec: { type: 'indisponible' },
+    })
     expect(tunnel.etat.saisie.email).toBe('camille@exemple.fr')
+  })
+
+  it('demande d’attendre quand elle a lancé trop de réservations', async () => {
+    const { tunnel, appelsReservation } = await tunnelSurLesCoordonnees()
+    saisirCamille(tunnel)
+
+    tunnel.envoyer()
+    appelsReservation[0].resoudre({ ok: false, erreur: { statut: 429, code: 'rate_limited' } })
+    await laisserFiler()
+
+    expect(tunnel.etat.ecran).toMatchObject({ nom: 'coordonnees', echec: { type: 'trop-de-requetes' } })
+    expect(tunnel.etat.saisie.email).toBe('camille@exemple.fr')
+  })
+
+  it('prévient que la réservation a peut-être été enregistrée quand le serveur ne répond pas, sans réessayer', async () => {
+    const { tunnel, appelsReservation } = await tunnelSurLesCoordonnees()
+    saisirCamille(tunnel)
+
+    tunnel.envoyer()
+    appelsReservation[0].resoudre({ ok: false, erreur: { statut: null, code: 'reseau' } })
+    await laisserFiler()
+
+    expect(tunnel.etat.ecran).toMatchObject({ nom: 'coordonnees', echec: { type: 'sans-reponse' } })
+    expect(tunnel.etat.saisie.email).toBe('camille@exemple.fr')
+    expect(appelsReservation).toHaveLength(1)
+  })
+
+  it('ne revoit plus l’ancien échec après être revenue aux créneaux', async () => {
+    const { tunnel, appelsReservation } = await tunnelSurLesCoordonnees()
+    saisirCamille(tunnel)
+    tunnel.envoyer()
+    appelsReservation[0].resoudre({ ok: false, erreur: { statut: 503, code: 'indisponible' } })
+    await laisserFiler()
+
+    tunnel.revenir()
+    tunnel.choisirCreneau(PROCHE)
+
+    expect(tunnel.etat.ecran).not.toHaveProperty('echec')
+  })
+
+  it('oublie l’échec au prochain envoi, même refusé faute de saisie valide', async () => {
+    const { tunnel, appelsReservation } = await tunnelSurLesCoordonnees()
+    saisirCamille(tunnel)
+    tunnel.envoyer()
+    appelsReservation[0].resoudre({ ok: false, erreur: { statut: 503, code: 'indisponible' } })
+    await laisserFiler()
+
+    tunnel.saisir('email', '')
+    tunnel.envoyer()
+
+    expect(tunnel.etat.ecran).toMatchObject({ nom: 'coordonnees' })
+    expect(tunnel.etat.ecran).not.toHaveProperty('echec')
+    expect(Object.keys(tunnel.etat.erreurs)).toEqual(['email'])
   })
 
   it('fait apparaître le téléphone en erreur quand l’atelier l’exige désormais', async () => {
     const { tunnel, appelsReservation } = await tunnelSurLesCoordonnees()
     saisirCamille(tunnel)
 
-    const envoi = tunnel.envoyer()
+    tunnel.envoyer()
     appelsReservation[0].resoudre({ ok: false, erreur: { statut: 422, code: 'phone_required' } })
+    await laisserFiler()
 
-    expect(await envoi).toBeNull()
     expect(tunnel.etat.ecran.nom).toBe('coordonnees')
     expect(tunnel.etat.telephoneDemande).toBe(true)
     expect(Object.keys(tunnel.etat.erreurs)).toEqual(['phone'])
+    expect(tunnel.etat.saisie.email).toBe('camille@exemple.fr')
+  })
+
+  // Le formulaire borne déjà la demande au plafond connu : le serveur ne
+  // refuse que si l'atelier l'a baissé depuis, et ce plafond-là, le tunnel ne
+  // le connaît pas (bug connu, hors périmètre). La demande reste donc la même.
+  it('ramène la demande au plafond de l’atelier quand elle en demande trop', async () => {
+    const { tunnel, appelsReservation } = await tunnelSurLesCoordonnees()
+    saisirCamille(tunnel)
+    tunnel.changerPlaces(3)
+
+    tunnel.envoyer()
+    appelsReservation[0].resoudre({ ok: false, erreur: { statut: 422, code: 'too_many_seats' } })
+    await laisserFiler()
+
+    expect(tunnel.etat.ecran).toMatchObject({
+      nom: 'coordonnees',
+      creneau: PROCHE,
+      echec: { type: 'trop-de-places', plafond: 4, places: 3 },
+    })
+    expect(tunnel.etat.places).toBe(3)
     expect(tunnel.etat.saisie.email).toBe('camille@exemple.fr')
   })
 })

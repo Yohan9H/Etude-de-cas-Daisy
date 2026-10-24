@@ -9,10 +9,10 @@
 import './style.css'
 
 import { getStudio, getCourses, getSlots, postBooking } from './api'
-import type { Studio, Course, Slot, Erreur as ErreurApi } from './api'
+import type { Studio, Course, Slot } from './api'
 import { envoyer, ecouter, estDansUneIframe } from './pont'
 import { creerTunnel, FENETRE_JOURS } from './tunnel'
-import type { EtatTunnel, Saisie, Tunnel } from './tunnel'
+import type { EchecEnvoi, EtatTunnel, Saisie, Tunnel } from './tunnel'
 import { hoteAutonome, hoteIframe } from './hote'
 
 // --- L'état ------------------------------------------------------------------
@@ -23,16 +23,10 @@ let tunnel: Tunnel
 
 type Etat = {
   studio: Studio | null
-
-  // Erreur qui ne porte sur aucun champ en particulier (réseau, 429, 500).
-  // Transitoire : rejoint le tunnel au ticket 06.
-  erreurEnvoi: string | null
 }
 
 const etat: Etat = {
   studio: null,
-
-  erreurEnvoi: null,
 }
 
 const racine = document.getElementById('app')!
@@ -603,17 +597,15 @@ function ecranCreneaux(cours: Course): HTMLElement {
   return zone
 }
 
-function ecranCoordonnees(cours: Course, creneau: Slot, placesMaximum: number): HTMLElement {
+function ecranCoordonnees(
+  cours: Course,
+  creneau: Slot,
+  placesMaximum: number,
+  echec: EchecEnvoi | undefined,
+): HTMLElement {
   const zone = creer('div', 'tunnel')
 
-  zone.appendChild(
-    enteteTunnel('Vos coordonnées', () => {
-      // Transitoire : le bandeau d'erreur rejoint le tunnel au ticket 06.
-      etat.erreurEnvoi = null
-
-      tunnel.revenir()
-    }),
-  )
+  zone.appendChild(enteteTunnel('Vos coordonnées', () => tunnel.revenir()))
 
   const corps = creer('div', 'tunnel-corps')
   const bande = creer('div', 'bande formulaire')
@@ -622,8 +614,8 @@ function ecranCoordonnees(cours: Course, creneau: Slot, placesMaximum: number): 
 
   // Erreur qui ne porte sur aucun champ : réseau, 429, 500. Elle est annoncée
   // aux lecteurs d'écran et placée avant le formulaire, pas après le bouton.
-  if (etat.erreurEnvoi) {
-    const bandeau = creer('p', 'bandeau-erreur', etat.erreurEnvoi)
+  if (echec) {
+    const bandeau = creer('p', 'bandeau-erreur', texteDEchec(echec))
     bandeau.setAttribute('role', 'alert')
     bande.appendChild(bandeau)
   }
@@ -651,7 +643,7 @@ function ecranCoordonnees(cours: Course, creneau: Slot, placesMaximum: number): 
 
   formulaire.addEventListener('submit', (evenement) => {
     evenement.preventDefault()
-    soumettre()
+    tunnel.envoyer()
   })
 
   bande.appendChild(formulaire)
@@ -870,7 +862,7 @@ function dessiner(): void {
   }
 
   if (ecran.nom === 'coordonnees') {
-    racine.appendChild(ecranCoordonnees(ecran.cours, ecran.creneau, ecran.placesMaximum))
+    racine.appendChild(ecranCoordonnees(ecran.cours, ecran.creneau, ecran.placesMaximum, ecran.echec))
     return
   }
 
@@ -925,58 +917,24 @@ function seuleLaSaisieAChange(avant: EtatTunnel, apres: EtatTunnel): boolean {
   return avant.saisie !== apres.saisie && cles.every((cle) => cle === 'saisie' || avant[cle] === apres[cle])
 }
 
-// --- Envoi -------------------------------------------------------------------
+// --- Échecs d'envoi -----------------------------------------------------------
 
-// Le tunnel valide, verrouille, envoie et affiche les refus. Transitoire : il
-// rend ici l'échec d'envoi qu'il ne traite pas encore, jusqu'au ticket 06.
-async function soumettre(): Promise<void> {
-  etat.erreurEnvoi = null
+// Un switch sans défaut : un nouveau type d'échec sans texte ne compile pas,
+// au lieu de s'afficher en « service indisponible ».
+function texteDEchec(echec: EchecEnvoi): string {
+  switch (echec.type) {
+    case 'trop-de-places':
+      return `Cet atelier accepte au maximum ${echec.plafond} places par réservation. Votre demande a été ramenée à ${echec.places}.`
 
-  const echec = await tunnel.envoyer()
+    case 'trop-de-requetes':
+      return 'Trop de réservations ont été lancées depuis votre connexion. Patientez une minute, puis réessayez.'
 
-  if (echec) traiterEchec(echec)
-}
+    case 'sans-reponse':
+      return 'Nous n’avons pas reçu de réponse. Votre réservation a peut-être été enregistrée : vérifiez votre boîte email avant de réessayer, un message de confirmation signifie que votre place est prise.'
 
-// Le tunnel est déjà revenu au formulaire, saisie intacte.
-function traiterEchec(erreur: ErreurApi): void {
-  if (erreur.code === 'too_many_seats') {
-    const plafond = etat.studio?.booking_policy.max_seats_per_booking ?? 1
-
-    // On ramène la demande dans les limites plutôt que de laisser la personne
-    // deviner combien elle a le droit de réserver.
-    const places = Math.min(tunnel.etat.places, plafond)
-
-    etat.erreurEnvoi = `Cet atelier accepte au maximum ${plafond} places par réservation. Votre demande a été ramenée à ${places}.`
-
-    // Redessine, le bandeau compris.
-    tunnel.changerPlaces(places)
-    return
+    case 'indisponible':
+      return 'Le service est momentanément indisponible. Votre saisie est conservée, réessayez dans un instant.'
   }
-
-  if (erreur.statut === 429) {
-    etat.erreurEnvoi =
-      'Trop de réservations ont été lancées depuis votre connexion. Patientez une minute, puis réessayez.'
-    dessiner()
-    return
-  }
-
-  // --- Le cas qu'on ne sait pas trancher ----------------------------------
-  //
-  // Pas de réponse du tout : la réservation a peut-être été créée malgré tout.
-  // L'API n'a pas de clé d'idempotence, et pas d'endpoint pour vérifier.
-  // On ne réessaie donc JAMAIS tout seul, et on le dit honnêtement.
-  if (erreur.statut === null) {
-    etat.erreurEnvoi =
-      'Nous n’avons pas reçu de réponse. Votre réservation a peut-être été enregistrée : vérifiez votre boîte email avant de réessayer, un message de confirmation signifie que votre place est prise.'
-
-    dessiner()
-    return
-  }
-
-  etat.erreurEnvoi =
-    'Le service est momentanément indisponible. Votre saisie est conservée, réessayez dans un instant.'
-
-  dessiner()
 }
 
 // --- Couleurs : contraste et lisibilité ---------------------------------------
