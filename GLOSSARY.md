@@ -20,8 +20,9 @@ _À éviter_ : séance, date, slot
 Le parcours de réservation, de l'ouverture du widget jusqu'à la confirmation.
 _À éviter_ : funnel, plein écran
 
-**Confirmation en attente** :
-Une réservation créée pendant que le tunnel était fermé par la page hôte ; elle est montrée à la prochaine ouverture plutôt que perdue.
+**Écran en attente** :
+L'écran qu'un envoi terminé pendant que la page hôte avait fermé le tunnel aurait affiché, montré à la prochaine ouverture plutôt que perdu : la confirmation d'une réservation créée, ou les coordonnées avec l'avertissement « sans réponse » quand on ne sait pas si elle l'a été.
+_À éviter_ : confirmation en attente (elle n'en est qu'un cas)
 
 **Refus** :
 La réponse du serveur qui refuse une réservation parce que la place est partie ou que le créneau a été annulé ; ce n'est pas une panne.

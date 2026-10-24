@@ -50,6 +50,11 @@ export type Ecran =
 // fermeture.
 export type Confirmation = { cours: Course; creneau: Slot; code: string; total: number; email: string }
 
+// Ce que l'envoi aurait affiché si la page hôte n'avait pas refermé le tunnel,
+// quand la personne doit le voir : la confirmation, ou ses coordonnées avec
+// l'échec `sans-reponse`.
+export type EcranEnAttente = Extract<Ecran, { nom: 'confirmation' | 'coordonnees' }>
+
 // Un envoi qui échoue sans être un refus. Le tunnel dit ce qui s'est passé, le
 // rendu choisit les mots.
 export type EchecEnvoi =
@@ -106,10 +111,11 @@ export type EtatTunnel = {
   // n'est demandé que si l'atelier l'exige.
   telephoneDemande: boolean
 
-  // La réservation a réussi pendant que la page hôte avait refermé le tunnel.
-  // On ne rouvre pas de nous-mêmes : seul un clic de la personne le fait, et
-  // c'est alors elle qu'on lui montre. null sinon.
-  confirmationEnAttente: Confirmation | null
+  // L'envoi s'est terminé pendant que la page hôte avait refermé le tunnel, et
+  // sa réponse ne doit pas être tue. On ne rouvre pas de nous-mêmes : seul un
+  // clic de la personne le fait, et c'est alors cet écran qu'on lui montre.
+  // null sinon.
+  ecranEnAttente: EcranEnAttente | null
 }
 
 // La spec plafonne la fenêtre à 90 jours, au-delà c'est un 400.
@@ -139,7 +145,7 @@ export function creerTunnel(dependances: {
     saisie: SAISIE_VIDE,
     erreurs: {},
     telephoneDemande: atelier.booking_policy.requires_phone,
-    confirmationEnAttente: null,
+    ecranEnAttente: null,
   }
   const abonnes = new Set<() => void>()
 
@@ -303,11 +309,13 @@ export function creerTunnel(dependances: {
     ouvrir(): void {
       hote.demanderOuverture()
 
-      // Une réservation faite pendant que le tunnel était fermé passe avant
-      // tout : la personne doit savoir qu'elle a sa place. Une fois affichée,
-      // c'est une confirmation comme une autre, effacée de la même façon.
-      if (etat.confirmationEnAttente !== null) {
-        changer({ ecran: { nom: 'confirmation', ...etat.confirmationEnAttente }, confirmationEnAttente: null })
+      // Un envoi terminé pendant que le tunnel était fermé passe avant tout :
+      // la personne doit savoir qu'elle a sa place, ou qu'elle l'a peut-être.
+      // Une fois affiché, c'est un écran comme un autre : la confirmation est
+      // effacée de la même façon, l'échec disparaît au retour ou au prochain
+      // envoi.
+      if (etat.ecranEnAttente !== null) {
+        changer({ ecran: etat.ecranEnAttente, ecranEnAttente: null })
         return
       }
 
@@ -444,7 +452,7 @@ export function creerTunnel(dependances: {
         // La réservation existe : on la garde pour la prochaine ouverture
         // plutôt que de la perdre.
         if (!attenteAffichee) {
-          changer({ confirmationEnAttente: confirmation })
+          changer({ ecranEnAttente: { nom: 'confirmation', ...confirmation } })
           return
         }
 
@@ -452,9 +460,25 @@ export function creerTunnel(dependances: {
         return
       }
 
-      // Un échec, lui, n'a plus personne à qui s'afficher : à la réouverture,
-      // la personne retrouve sa saisie comme après toute fermeture.
-      if (!attenteAffichee) return
+      // Hors refus, on retourne au formulaire, saisie intacte.
+      const coordonnees: Ecran = { nom: 'coordonnees', cours, creneau, placesMaximum: placesMaximum(creneau) }
+      const echec = echecEnvoi(resultat.erreur, places, creneau)
+
+      if (!attenteAffichee) {
+        // Sans réponse, la réservation existe peut-être. Si on ne le disait
+        // pas, la personne renverrait sans se méfier, et l'atelier recevrait
+        // peut-être une seconde réservation : on le garde pour la prochaine
+        // ouverture.
+        if (echec.type === 'sans-reponse') {
+          changer({ ecranEnAttente: { ...coordonnees, echec } })
+          return
+        }
+
+        // Les autres échecs, le serveur y a répondu et rien n'a été créé : à
+        // la réouverture, la personne retrouve sa saisie comme après toute
+        // fermeture.
+        return
+      }
 
       // Un refus : les créneaux affichés datent d'avant la saisie, on les
       // recharge pour ne proposer que des dates qui existent encore.
@@ -465,9 +489,6 @@ export function creerTunnel(dependances: {
         chargerCreneaux(cours)
         return
       }
-
-      // On retourne au formulaire, saisie intacte.
-      const coordonnees: Ecran = { nom: 'coordonnees', cours, creneau, placesMaximum: placesMaximum(creneau) }
 
       // /studio disait que le téléphone n'était pas demandé, le serveur dit
       // l'inverse : l'artisan a changé sa politique depuis le chargement. On
@@ -480,8 +501,6 @@ export function creerTunnel(dependances: {
         })
         return
       }
-
-      const echec = echecEnvoi(resultat.erreur, places, creneau)
 
       changer({
         ecran: { ...coordonnees, echec },

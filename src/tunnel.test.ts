@@ -1003,7 +1003,21 @@ describe('la page hôte referme le tunnel pendant l’envoi', () => {
     return outils
   }
 
-  it('garde la confirmation en attente quand la réservation réussit, sans rouvrir le tunnel', async () => {
+  // L'envoi de Camille est resté sans réponse pendant que le tunnel était
+  // fermé, et elle vient de le rouvrir.
+  async function tunnelRouvertSurLAvertissementSansReponse() {
+    const outils = await tunnelSurLesCoordonnees()
+    saisirCamille(outils.tunnel)
+    outils.tunnel.envoyer()
+    outils.tunnel.hoteAFerme()
+    outils.appelsReservation[0].resoudre({ ok: false, erreur: { statut: null, code: 'reseau' } })
+    await laisserFiler()
+    outils.tunnel.ouvrir()
+
+    return outils
+  }
+
+  it('garde sa confirmation pour la prochaine ouverture quand la réservation réussit, sans rouvrir le tunnel', async () => {
     const { tunnel, appelsReservation, demandes } = await tunnelSurLesCoordonnees()
     saisirCamille(tunnel)
     tunnel.envoyer()
@@ -1016,7 +1030,7 @@ describe('la page hôte referme le tunnel pendant l’envoi', () => {
     await laisserFiler()
 
     expect(tunnel.etat.ecran.nom).toBe('bouton')
-    expect(tunnel.etat.confirmationEnAttente).toMatchObject({ code: 'DSY-4821', total: 6500 })
+    expect(tunnel.etat.ecranEnAttente).toMatchObject({ code: 'DSY-4821', total: 6500 })
     expect(demandes).toEqual(['ouverture'])
   })
 
@@ -1036,7 +1050,7 @@ describe('la page hôte referme le tunnel pendant l’envoi', () => {
     })
   })
 
-  it('efface la saisie et la confirmation en attente en terminant', async () => {
+  it('efface la saisie et l’écran en attente en terminant', async () => {
     const { tunnel, demandes } = await tunnelAvecUneConfirmationEnAttente()
     tunnel.ouvrir()
 
@@ -1045,14 +1059,14 @@ describe('la page hôte referme le tunnel pendant l’envoi', () => {
 
     expect(demandes).toEqual(['ouverture', 'ouverture', 'fermeture'])
     expect(tunnel.etat.saisie).toEqual(SAISIE_VIDE)
-    expect(tunnel.etat.confirmationEnAttente).toBeNull()
+    expect(tunnel.etat.ecranEnAttente).toBeNull()
 
     tunnel.ouvrir()
 
     expect(tunnel.etat.ecran).toEqual({ nom: 'cours' })
   })
 
-  it('efface la saisie et la confirmation en attente en fermant la confirmation', async () => {
+  it('efface la saisie et l’écran en attente en fermant la confirmation', async () => {
     const { tunnel } = await tunnelAvecUneConfirmationEnAttente()
     tunnel.ouvrir()
 
@@ -1060,29 +1074,81 @@ describe('la page hôte referme le tunnel pendant l’envoi', () => {
     tunnel.hoteAFerme()
 
     expect(tunnel.etat.saisie).toEqual(SAISIE_VIDE)
-    expect(tunnel.etat.confirmationEnAttente).toBeNull()
+    expect(tunnel.etat.ecranEnAttente).toBeNull()
 
     tunnel.ouvrir()
 
     expect(tunnel.etat.ecran).toEqual({ nom: 'cours' })
   })
 
-  it('retrouve la liste des cours et sa saisie intacte en rouvrant, quand l’envoi a échoué', async () => {
+  // Le serveur a répondu, rien n'a été créé : rien à garder pour la réouverture.
+  it.each([
+    { statut: 503, code: 'indisponible' },
+    { statut: 429, code: 'rate_limited' },
+  ])('retrouve la liste des cours et sa saisie intacte en rouvrant, quand l’envoi a échoué ($statut)', async (erreur) => {
     const { tunnel, appelsReservation } = await tunnelSurLesCoordonnees()
     saisirCamille(tunnel)
     tunnel.envoyer()
 
     tunnel.hoteAFerme()
-    appelsReservation[0].resoudre({ ok: false, erreur: { statut: 503, code: 'indisponible' } })
+    appelsReservation[0].resoudre({ ok: false, erreur })
     await laisserFiler()
 
     expect(tunnel.etat.ecran.nom).toBe('bouton')
-    expect(tunnel.etat.confirmationEnAttente).toBeNull()
+    expect(tunnel.etat.ecranEnAttente).toBeNull()
 
     tunnel.ouvrir()
 
     expect(tunnel.etat.ecran).toEqual({ nom: 'cours' })
     expect(tunnel.etat.saisie.email).toBe('camille@exemple.fr')
+  })
+
+  it('retrouve l’avertissement sans réponse sur ses coordonnées en rouvrant, sans que le tunnel se rouvre ni réessaie', async () => {
+    const { tunnel, appelsReservation, demandes } = await tunnelSurLesCoordonnees()
+    saisirCamille(tunnel)
+    tunnel.envoyer()
+
+    tunnel.hoteAFerme()
+    appelsReservation[0].resoudre({ ok: false, erreur: { statut: null, code: 'reseau' } })
+    await laisserFiler()
+
+    expect(tunnel.etat.ecran.nom).toBe('bouton')
+    expect(demandes).toEqual(['ouverture'])
+
+    tunnel.ouvrir()
+
+    expect(tunnel.etat.ecran).toEqual({
+      nom: 'coordonnees',
+      cours: TOUR,
+      creneau: PROCHE,
+      placesMaximum: 4,
+      echec: { type: 'sans-reponse' },
+    })
+    expect(tunnel.etat.saisie.email).toBe('camille@exemple.fr')
+    expect(appelsReservation).toHaveLength(1)
+  })
+
+  it('voit l’avertissement sans réponse disparaître au retour aux créneaux', async () => {
+    const { tunnel } = await tunnelRouvertSurLAvertissementSansReponse()
+
+    tunnel.revenir()
+    tunnel.choisirCreneau(PROCHE)
+
+    expect(tunnel.etat.ecran).toEqual({ nom: 'coordonnees', cours: TOUR, creneau: PROCHE, placesMaximum: 4 })
+
+    tunnel.hoteAFerme()
+    tunnel.ouvrir()
+
+    expect(tunnel.etat.ecran).toEqual({ nom: 'cours' })
+  })
+
+  it('peut renvoyer depuis l’avertissement sans réponse retrouvé, qui disparaît alors', async () => {
+    const { tunnel, appelsReservation } = await tunnelRouvertSurLAvertissementSansReponse()
+
+    tunnel.envoyer()
+
+    expect(appelsReservation).toHaveLength(2)
+    expect(tunnel.etat.ecran).toEqual({ nom: 'envoi', cours: TOUR, creneau: PROCHE })
   })
 
   it('ne voit pas le refus arrivé pendant que le tunnel était fermé, en le rouvrant', async () => {
@@ -1119,6 +1185,6 @@ describe('la page hôte referme le tunnel pendant l’envoi', () => {
     await laisserFiler()
 
     expect(tunnel.etat.ecran).toMatchObject({ nom: 'confirmation', code: 'DSY-4821' })
-    expect(tunnel.etat.confirmationEnAttente).toBeNull()
+    expect(tunnel.etat.ecranEnAttente).toBeNull()
   })
 })

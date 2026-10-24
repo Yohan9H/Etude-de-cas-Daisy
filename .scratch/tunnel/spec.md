@@ -66,7 +66,7 @@ Pour la personne qui réserve, le tunnel se comporte comme aujourd'hui, sans les
 
 ## Décisions d'implémentation
 
-- **Un nouveau module tunnel** possède l'état du tunnel (écran courant et ses données, cours, créneaux, saisie, erreurs, nombre de places, verrou d'envoi, confirmation en attente) et toutes ses transitions, y compris les appels réseau et l'abandon des réponses périmées.
+- **Un nouveau module tunnel** possède l'état du tunnel (écran courant et ses données, cours, créneaux, saisie, erreurs, nombre de places, verrou d'envoi, écran en attente) et toutes ses transitions, y compris les appels réseau et l'abandon des réponses périmées.
 - **Création** : le tunnel est créé avec l'atelier déjà chargé et trois dépendances injectées : l'API, l'hôte et l'horloge. Il n'importe aucune de ces dépendances lui-même.
 - **Adapter API** : expose les opérations déjà présentes (liste des cours, créneaux d'un cours sur une période, création d'une réservation) et renvoie le résultat actuel « ok ou erreur ». Deux adapters : le module d'API existant en production, une fausse API scriptable dans les tests.
 - **Adapter hôte** : sait demander l'ouverture et la fermeture. Deux adapters : l'iframe (envoie `expand`/`collapse` à la page hôte et attend l'écho `closed`) et l'autonome (confirme la fermeture immédiatement, pour le développement hors iframe). Le choix de l'adapter se fait une seule fois au démarrage ; la vérification « suis-je dans une iframe » disparaît de la logique de fermeture.
@@ -79,8 +79,8 @@ Pour la personne qui réserve, le tunnel se comporte comme aujourd'hui, sans les
 - **Nombre de places** : conservé et ramené au plafond quand on change de créneau dans le même cours ; remis à 1 quand on change de cours.
 - **Saisie** : gardée par le tunnel, avec la validation et l'exigence de téléphone. Elle survit aux refus et aux fermetures. Elle n'est effacée qu'à la fin d'une réservation (`terminer`, ou `fermer` depuis l'écran de confirmation).
 - **`fermer`** est ignoré pendant l'envoi.
-- **`ouvrir`** affiche la confirmation en attente s'il y en a une ; l'écran d'attente si un envoi n'a pas encore reçu sa réponse ; sinon la liste des cours, qu'il ne charge qu'à la première ouverture.
-- **Confirmation en attente** : si l'hôte referme le tunnel pendant l'envoi et que la réservation réussit, le tunnel garde la confirmation et la montre à la prochaine ouverture ; il ne redemande pas l'ouverture de lui-même.
+- **`ouvrir`** affiche l'écran en attente s'il y en a un ; l'écran d'attente si un envoi n'a pas encore reçu sa réponse ; sinon la liste des cours, qu'il ne charge qu'à la première ouverture.
+- **Écran en attente** : si l'hôte referme le tunnel pendant l'envoi, le tunnel garde l'écran que l'envoi aurait affiché et le montre tel quel à la prochaine ouverture ; il ne redemande pas l'ouverture de lui-même et ne réessaie jamais tout seul. Deux cas : la réservation réussit, et c'est la confirmation ; l'envoi reste sans réponse, et ce sont les coordonnées du créneau envoyé avec l'échec `sans-reponse`, saisie intacte, car la réservation existe peut-être. Cela déroge à la user story 32 : un créneau devenu complet entre-temps recevra un refus au prochain envoi. Les autres échecs (refus, 429, 503…) restent tus : le serveur a répondu, rien n'a été créé, et la réouverture repart de la liste des cours, saisie intacte.
 - **Textes d'erreur** : repris tels quels de l'implémentation actuelle (traitement des échecs d'envoi et textes d'erreur de chargement). Leur réorganisation appartient à un chantier ultérieur.
 - **Livraison par tranches verticales** : le widget reste fonctionnel après chaque tranche. Première tranche : Vitest, plus un tunnel squelette qui gère `ouvrir`, `fermer`, `hoteAFerme` et le chargement des cours, branché sur le vrai rendu.
 
@@ -106,6 +106,6 @@ Pour la personne qui réserve, le tunnel se comporte comme aujourd'hui, sans les
 
 ## Notes
 
-- Les termes suivent `GLOSSARY.md` : atelier, cours, créneau, tunnel, refus, confirmation en attente.
+- Les termes suivent `GLOSSARY.md` : atelier, cours, créneau, tunnel, refus, écran en attente.
 - Origine : la piste 1 de la revue d'architecture (`/improve-codebase-architecture`), puis une session de grilling avec 18 décisions.
 - L'API n'a ni clé d'idempotence ni moyen de vérifier une réservation : la règle « ne jamais réessayer tout seul après une absence de réponse » doit rester visible dans le tunnel.
