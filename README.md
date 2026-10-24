@@ -50,6 +50,7 @@ montrer les états dégradés en direct plutôt que d'en parler :
 | `server_error` | `500` sur tous les endpoints |
 | `slow` | +3 s sur les lectures |
 | `hang` | Le serveur ne répond jamais : teste le délai avant le lien de secours |
+| `drop` | La création d'une réservation est coupée sans réponse : l'envoi échoue en « sans réponse » |
 
 Deux comportements sont là en permanence, parce qu'ils sont dans la spec et
 qu'ils ne sont pas négociables :

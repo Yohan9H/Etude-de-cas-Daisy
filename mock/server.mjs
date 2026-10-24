@@ -39,6 +39,7 @@ const SCENARIOS = {
 
   slow: 'Lecture très lente (+3 s sur les GET)',
   hang: 'Le serveur ne répond jamais (test du délai d\'attente)',
+  drop: 'POST /bookings coupé sans réponse (envoi « sans réponse »)',
 }
 
 let scenario = 'ok'
@@ -224,6 +225,15 @@ async function postBooking(req, res) {
   // c'est pendant cette attente que l'utilisateur va recliquer.
   await attendre(latenceDeCreation())
 
+  // Une connexion coupée, pas une réponse : le widget ne sait pas si la
+  // réservation a été créée. `hang` ne le produit pas, faute de délai maximal
+  // sur l'envoi. Seule la création est coupée, pour qu'on puisse naviguer
+  // jusqu'au formulaire.
+  if (scenario === 'drop') {
+    console.log('[mock] connexion coupée sans réponse :', req.url)
+    return req.socket.destroy()
+  }
+
   if (scenario === 'slot_full') {
     return erreur(res, 409, 'slot_full', { available: 0 })
   }
@@ -296,6 +306,11 @@ const serveur = createServer(async (req, res) => {
   const chemin = url.pathname
 
   appliquerCors(req, res)
+
+  // Chrome rejoue de lui-même une requête dont la connexion, réutilisée, tombe
+  // avant tout octet de réponse : sous `drop`, la création coupée arriverait
+  // deux fois. Chaque requête part donc sur une connexion neuve.
+  if (scenario === 'drop') res.setHeader('Connection', 'close')
 
   // Requête préalable du navigateur avant un POST cross-origin.
   if (req.method === 'OPTIONS') {

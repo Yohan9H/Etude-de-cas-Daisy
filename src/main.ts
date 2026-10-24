@@ -1030,6 +1030,14 @@ async function demarrer(): Promise<void> {
     if (type === 'closed') tunnel.hoteAFerme()
   })
 
+  // Widget seul, aucune page hôte ne peut nous refermer d'elle-même. Cet
+  // évènement la simule, pour vérifier par script ce qui suit une fermeture
+  // par la page hôte (voir `docs/agents/verification-demo.md`). Dans une
+  // iframe, c'est l'écho `closed` qui joue ce rôle.
+  if (!estDansUneIframe()) {
+    window.addEventListener('daisy:hote-ferme', () => tunnel.hoteAFerme())
+  }
+
   // Échap tapé DANS l'iframe n'atteint jamais le document hôte : le <dialog>
   // ne le voit pas et ne se referme pas tout seul. C'est le prix de
   // l'isolation, et il se paie ici.

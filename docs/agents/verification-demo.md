@@ -32,7 +32,9 @@ Le site hostile met le CSS de la page hôte à l'épreuve ; le widget seul exerc
 
   Le loader traite `cancel` comme une fermeture par la page (voir `public/v1.js`). `dialog.open` vaut encore `true` juste après l'appel ; vérifier sur une capture que le widget est revenu au bouton.
 
-Après chaque fermeture, rouvrir : le tunnel repart de la liste des cours. Trois exceptions, après une fermeture par la page hôte pendant l'envoi : rouvert avant la réponse, il remet l'écran d'attente ; après une réservation réussie, il montre la confirmation ; après un envoi resté sans réponse, il montre les coordonnées avec l'avertissement « sans réponse ». Pour produire ce dernier cas, arrêter le faux serveur (`lsof -ti :3001 | xargs kill`) après la fermeture et avant la réponse, puis le relancer (`npm run api`, en tâche de fond) avant de rouvrir : le scénario `hang` fait attendre la requête indéfiniment, faute de délai maximal sur l'envoi.
+  Dans le widget seul, sans page hôte, la simuler par script : `window.dispatchEvent(new Event('daisy:hote-ferme'))`. Tout ce qui suit une fermeture par la page hôte se vérifie alors par script ; le site de démo ne sert plus qu'au rendu.
+
+Après chaque fermeture, rouvrir : le tunnel repart de la liste des cours. Trois exceptions, après une fermeture par la page hôte pendant l'envoi : rouvert avant la réponse, il remet l'écran d'attente ; après une réservation réussie, il montre la confirmation ; après un envoi resté sans réponse, il montre les coordonnées avec l'avertissement « sans réponse ». Pour produire ce dernier cas, choisir le scénario `drop`, qui coupe la connexion au lieu de répondre, et non `hang`, qui fait attendre la requête indéfiniment faute de délai maximal sur l'envoi.
 
 ## Le faux serveur
 
