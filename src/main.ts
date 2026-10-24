@@ -18,21 +18,10 @@ import { hoteAutonome, hoteIframe } from './hote'
 // --- L'état ------------------------------------------------------------------
 
 // Le tunnel décide s'il est ouvert et porte tous les écrans, de la liste des
-// cours à la confirmation. Seuls les écrans de refus ne l'ont pas encore
-// rejoint : quand l'un d'eux est affiché, il est noté ici et passe devant
-// l'écran du tunnel, qui est alors sur les créneaux du cours. Ce type
-// disparaît quand les refus auront rejoint le tunnel (ticket 05).
+// cours à la confirmation, refus compris.
 let tunnel: Tunnel
 
-// Le refus n'est pas une erreur technique : c'est un écran à part entière.
-type Ecran =
-  | { nom: 'place-partie'; cours: Course; creneau: Slot; restantes: number }
-  | { nom: 'creneau-annule'; cours: Course }
-
 type Etat = {
-  // null : on affiche l'écran du tunnel.
-  ecran: Ecran | null
-
   studio: Studio | null
 
   // Erreur qui ne porte sur aucun champ en particulier (réseau, 429, 500).
@@ -41,8 +30,6 @@ type Etat = {
 }
 
 const etat: Etat = {
-  ecran: null,
-
   studio: null,
 
   erreurEnvoi: null,
@@ -520,7 +507,7 @@ function ecranBouton(): HTMLElement {
   const zone = creer('div', 'entree')
   const bouton = creer('button', 'bouton-principal', 'Réserver un atelier')
 
-  bouton.addEventListener('click', ouvrirTunnel)
+  bouton.addEventListener('click', () => tunnel.ouvrir())
   zone.appendChild(bouton)
 
   return zone
@@ -664,7 +651,7 @@ function ecranCoordonnees(cours: Course, creneau: Slot, placesMaximum: number): 
 
   formulaire.addEventListener('submit', (evenement) => {
     evenement.preventDefault()
-    soumettre(cours, creneau)
+    soumettre()
   })
 
   bande.appendChild(formulaire)
@@ -754,7 +741,7 @@ function ecranConfirmation(creneau: Slot, code: string, total: number, email: st
 }
 
 // L'écran du refus. C'est la réponse à la question 3 de l'énoncé.
-function ecranPlacePartie(cours: Course, creneau: Slot, restantes: number): HTMLElement {
+function ecranPlacePartie(cours: Course, creneau: Slot, alternatives: Slot[]): HTMLElement {
   const zone = creer('div', 'tunnel')
 
   zone.appendChild(enteteTunnel(cours.name))
@@ -763,6 +750,7 @@ function ecranPlacePartie(cours: Course, creneau: Slot, restantes: number): HTML
   const bande = creer('div', 'bande refus')
 
   const quand = `${formaterJour(creneau.starts_at)} à ${formaterHeure(creneau.starts_at)}`
+  const restantes = creneau.seats_available
 
   // Deux situations très différentes derrière le même code 409.
   if (restantes > 0) {
@@ -792,14 +780,8 @@ function ecranPlacePartie(cours: Course, creneau: Slot, restantes: number): HTML
       restantes === 1 ? 'Réserver pour 1 personne' : `Réserver pour ${restantes} personnes`,
     )
 
-    // Le tunnel est sur les créneaux du cours, rechargés après le refus.
-    // Transitoire : deux changements, donc deux redessins, jusqu'à ce que le
-    // refus rejoigne le tunnel au ticket 05.
-    reduire.addEventListener('click', () => {
-      etat.ecran = null
-      tunnel.choisirCreneau(creneau)
-      tunnel.changerPlaces(restantes)
-    })
+    // Le tunnel ramène la demande aux places restantes du créneau.
+    reduire.addEventListener('click', () => tunnel.choisirCreneau(creneau))
 
     bande.appendChild(reduire)
   } else {
@@ -814,36 +796,21 @@ function ecranPlacePartie(cours: Course, creneau: Slot, restantes: number): HTML
     )
   }
 
-  const creneaux = tunnel.etat.creneaux
-  const autres = (creneaux?.etat === 'prete' ? creneaux.liste : []).filter(
-    (autre) => autre.slot_id !== creneau.slot_id && autre.seats_available > 0,
-  )
-
-  if (autres.length > 0) {
+  if (alternatives.length > 0) {
     bande.appendChild(creer('p', 'refus-sous-titre', 'Prochaines dates disponibles'))
 
     const liste = creer('div', 'liste')
 
-    // Les trois plus proches : au-delà, on renvoie vers la liste complète.
-    for (const autre of autres.slice(0, 3)) {
-      liste.appendChild(
-        // La saisie n'est pas touchée : un clic suffit pour repartir. Le
-        // tunnel est sur les créneaux du cours, rechargés après le refus.
-        ligneCreneau(autre, (choisi) => {
-          etat.ecran = null
-          tunnel.choisirCreneau(choisi)
-        }),
-      )
+    for (const autre of alternatives) {
+      // La saisie n'est pas touchée : un clic suffit pour repartir.
+      liste.appendChild(ligneCreneau(autre, (choisi) => tunnel.choisirCreneau(choisi)))
     }
 
     bande.appendChild(liste)
   }
 
   const toutes = creer('button', 'bouton-secondaire', 'Voir toutes les dates')
-  toutes.addEventListener('click', () => {
-    etat.ecran = null
-    dessiner()
-  })
+  toutes.addEventListener('click', () => tunnel.voirToutesLesDates())
   bande.appendChild(toutes)
 
   corps.appendChild(bande)
@@ -872,10 +839,7 @@ function ecranCreneauAnnule(cours: Course): HTMLElement {
   )
 
   const toutes = creer('button', 'bouton-principal', 'Choisir une autre date')
-  toutes.addEventListener('click', () => {
-    etat.ecran = null
-    dessiner()
-  })
+  toutes.addEventListener('click', () => tunnel.voirToutesLesDates())
   bande.appendChild(toutes)
 
   corps.appendChild(bande)
@@ -900,18 +864,6 @@ function dessiner(): void {
     return
   }
 
-  if (etat.ecran?.nom === 'place-partie') {
-    racine.appendChild(
-      ecranPlacePartie(etat.ecran.cours, etat.ecran.creneau, etat.ecran.restantes),
-    )
-    return
-  }
-
-  if (etat.ecran?.nom === 'creneau-annule') {
-    racine.appendChild(ecranCreneauAnnule(etat.ecran.cours))
-    return
-  }
-
   if (ecran.nom === 'creneaux') {
     racine.appendChild(ecranCreneaux(ecran.cours))
     return
@@ -929,6 +881,16 @@ function dessiner(): void {
 
   if (ecran.nom === 'confirmation') {
     racine.appendChild(ecranConfirmation(ecran.creneau, ecran.code, ecran.total, ecran.email))
+    return
+  }
+
+  if (ecran.nom === 'place-partie') {
+    racine.appendChild(ecranPlacePartie(ecran.cours, ecran.creneau, ecran.alternatives))
+    return
+  }
+
+  if (ecran.nom === 'creneau-annule') {
+    racine.appendChild(ecranCreneauAnnule(ecran.cours))
     return
   }
 
@@ -965,39 +927,18 @@ function seuleLaSaisieAChange(avant: EtatTunnel, apres: EtatTunnel): boolean {
 
 // --- Envoi -------------------------------------------------------------------
 
-// Le tunnel valide, verrouille et envoie. Transitoire : il rend ici l'échec
-// qu'il ne traite pas encore, jusqu'aux tickets 05 et 06.
-async function soumettre(cours: Course, creneau: Slot): Promise<void> {
+// Le tunnel valide, verrouille, envoie et affiche les refus. Transitoire : il
+// rend ici l'échec d'envoi qu'il ne traite pas encore, jusqu'au ticket 06.
+async function soumettre(): Promise<void> {
   etat.erreurEnvoi = null
 
   const echec = await tunnel.envoyer()
 
-  if (echec) traiterEchec(cours, creneau, echec)
+  if (echec) traiterEchec(echec)
 }
 
-function traiterEchec(cours: Course, creneau: Slot, erreur: ErreurApi): void {
-  // --- La place est partie pendant la saisie ------------------------------
-  if (erreur.code === 'slot_full') {
-    // Les créneaux affichés datent d'avant : on les rafraîchit pour proposer
-    // des dates qui existent encore. L'écran s'affiche sans attendre.
-    etat.ecran = { nom: 'place-partie', cours, creneau, restantes: erreur.available ?? 0 }
-    dessiner()
-
-    rafraichirCreneaux(cours)
-    return
-  }
-
-  if (erreur.code === 'slot_cancelled') {
-    etat.ecran = { nom: 'creneau-annule', cours }
-    dessiner()
-
-    rafraichirCreneaux(cours)
-    return
-  }
-
-  // --- On retourne au formulaire, saisie intacte --------------------------
-  // Le tunnel y est déjà revenu.
-
+// Le tunnel est déjà revenu au formulaire, saisie intacte.
+function traiterEchec(erreur: ErreurApi): void {
   if (erreur.code === 'too_many_seats') {
     const plafond = etat.studio?.booking_policy.max_seats_per_booking ?? 1
 
@@ -1036,26 +977,6 @@ function traiterEchec(cours: Course, creneau: Slot, erreur: ErreurApi): void {
     'Le service est momentanément indisponible. Votre saisie est conservée, réessayez dans un instant.'
 
   dessiner()
-}
-
-// Recharge les créneaux sans changer d'écran : sert à proposer des dates
-// encore valables après un refus. On passe par `choisirCours`, qui remet
-// aussi l'écran du tunnel sur les créneaux du cours et la liste en
-// chargement : sans effet visible, l'écran du refus passe devant. Les
-// alternatives restent vides jusqu'à la réponse, plutôt que périmées.
-// Transitoire : le rechargement après un refus rejoint le tunnel au ticket 05.
-function rafraichirCreneaux(cours: Course): void {
-  tunnel.choisirCours(cours)
-}
-
-// --- Navigation --------------------------------------------------------------
-
-function ouvrirTunnel(): void {
-  // On repart toujours de la liste des cours, jamais d'un créneau resté
-  // affiché d'une ouverture précédente.
-  etat.ecran = null
-
-  tunnel.ouvrir()
 }
 
 // --- Couleurs : contraste et lisibilité ---------------------------------------

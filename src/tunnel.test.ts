@@ -670,7 +670,7 @@ describe('terminer sa réservation', () => {
 
 describe('l’envoi échoue', () => {
   // Transitoire : le point d'entrée traite l'échec qu'on lui rend, jusqu'à
-  // ce que refus et échecs rejoignent le tunnel (tickets 05 et 06).
+  // ce que les échecs d'envoi rejoignent le tunnel (ticket 06).
   it('ramène aux coordonnées avec la saisie intacte, et rend l’échec', async () => {
     const { tunnel, appelsReservation } = await tunnelSurLesCoordonnees()
     saisirCamille(tunnel)
@@ -695,6 +695,205 @@ describe('l’envoi échoue', () => {
     expect(tunnel.etat.telephoneDemande).toBe(true)
     expect(Object.keys(tunnel.etat.erreurs)).toEqual(['phone'])
     expect(tunnel.etat.saisie.email).toBe('camille@exemple.fr')
+  })
+})
+
+// Un tunnel sur les coordonnées du créneau proche, Camille demande 3 places
+// et la réservation est partie.
+async function tunnelEnEnvoi() {
+  const outils = await tunnelSurLesCoordonnees()
+  saisirCamille(outils.tunnel)
+  outils.tunnel.changerPlaces(3)
+  outils.tunnel.envoyer()
+
+  return outils
+}
+
+describe('la place est partie pendant la saisie', () => {
+  it('voit le refus et les places restantes, saisie intacte', async () => {
+    const { tunnel, appelsReservation } = await tunnelEnEnvoi()
+    const vus: string[] = []
+    tunnel.abonner(() => vus.push(tunnel.etat.ecran.nom))
+
+    appelsReservation[0].resoudre({ ok: false, erreur: { statut: 409, code: 'slot_full', available: 1 } })
+    await laisserFiler()
+
+    expect(tunnel.etat.ecran).toMatchObject({
+      nom: 'place-partie',
+      cours: TOUR,
+      creneau: { ...PROCHE, seats_available: 1 },
+    })
+    expect(tunnel.etat.saisie.email).toBe('camille@exemple.fr')
+    expect(tunnel.etat.places).toBe(3)
+    expect(vus).toEqual(['place-partie'])
+  })
+
+  it('ne se voit plus proposer les créneaux d’avant le refus, rechargés', async () => {
+    const { tunnel, appelsReservation, appelsCreneaux } = await tunnelEnEnvoi()
+
+    appelsReservation[0].resoudre({ ok: false, erreur: { statut: 409, code: 'slot_full', available: 0 } })
+    await laisserFiler()
+
+    expect(tunnel.etat.creneaux).toEqual({ etat: 'en-chargement' })
+    expect(appelsCreneaux).toHaveLength(2)
+    expect(appelsCreneaux[1].idCours).toBe('tour')
+  })
+
+  it('propose les trois prochains créneaux disponibles, une fois rechargés', async () => {
+    const { tunnel, appelsReservation, appelsCreneaux } = await tunnelEnEnvoi()
+    const complet = { ...creneau('complet', '2026-10-25T14:00:00Z'), seats_available: 0 }
+    const suivants = [
+      creneau('j4', '2026-10-26T14:00:00Z'),
+      creneau('j5', '2026-10-27T14:00:00Z'),
+      creneau('j6', '2026-10-28T14:00:00Z'),
+    ]
+    const lointain = creneau('lointain', '2026-12-05T14:00:00Z')
+
+    appelsReservation[0].resoudre({ ok: false, erreur: { statut: 409, code: 'slot_full', available: 0 } })
+    await laisserFiler()
+
+    expect(tunnel.etat.ecran).toMatchObject({ nom: 'place-partie', alternatives: [] })
+
+    appelsCreneaux[1].resoudre({
+      ok: true,
+      donnees: { slots: [lointain, { ...PROCHE, seats_available: 0 }, complet, ...suivants] },
+    })
+    await laisserFiler()
+
+    expect(tunnel.etat.ecran).toMatchObject({ nom: 'place-partie', alternatives: suivants })
+  })
+
+  it('les places restantes suivent les créneaux rechargés, plus récents que le refus', async () => {
+    const { tunnel, appelsReservation, appelsCreneaux } = await tunnelEnEnvoi()
+    const devenuComplet = { ...PROCHE, seats_available: 0 }
+    appelsReservation[0].resoudre({ ok: false, erreur: { statut: 409, code: 'slot_full', available: 1 } })
+    await laisserFiler()
+
+    appelsCreneaux[1].resoudre({ ok: true, donnees: { slots: [devenuComplet] } })
+    await laisserFiler()
+
+    expect(tunnel.etat.ecran).toMatchObject({ nom: 'place-partie', creneau: devenuComplet })
+  })
+
+  it('choisir une alternative mène aux coordonnées, places ramenées au plafond du créneau', async () => {
+    const { tunnel, appelsReservation, appelsCreneaux } = await tunnelEnEnvoi()
+    const presqueComplet = { ...creneau('presque-complet', '2026-10-26T14:00:00Z'), seats_available: 2 }
+    appelsReservation[0].resoudre({ ok: false, erreur: { statut: 409, code: 'slot_full', available: 0 } })
+    await laisserFiler()
+    appelsCreneaux[1].resoudre({ ok: true, donnees: { slots: [presqueComplet] } })
+    await laisserFiler()
+
+    tunnel.choisirCreneau(presqueComplet)
+
+    expect(tunnel.etat.ecran).toEqual({ nom: 'coordonnees', cours: TOUR, creneau: presqueComplet, placesMaximum: 2 })
+    expect(tunnel.etat.places).toBe(2)
+    expect(tunnel.etat.saisie.email).toBe('camille@exemple.fr')
+  })
+
+  it('reprendre le même créneau ramène la demande aux places restantes, en un seul changement', async () => {
+    const { tunnel, appelsReservation } = await tunnelEnEnvoi()
+    appelsReservation[0].resoudre({ ok: false, erreur: { statut: 409, code: 'slot_full', available: 1 } })
+    await laisserFiler()
+    const ecran = tunnel.etat.ecran
+    if (ecran.nom !== 'place-partie') throw new Error('attendu : place-partie')
+    const vus: string[] = []
+    tunnel.abonner(() => vus.push(tunnel.etat.ecran.nom))
+
+    tunnel.choisirCreneau(ecran.creneau)
+
+    expect(tunnel.etat.ecran).toMatchObject({ nom: 'coordonnees', creneau: { slot_id: 'proche' }, placesMaximum: 1 })
+    expect(tunnel.etat.places).toBe(1)
+    expect(vus).toEqual(['coordonnees'])
+  })
+})
+
+describe('le créneau a été annulé pendant la saisie', () => {
+  it('en est informée, saisie intacte, et les créneaux sont rechargés', async () => {
+    const { tunnel, appelsReservation, appelsCreneaux } = await tunnelEnEnvoi()
+    const vus: string[] = []
+    tunnel.abonner(() => vus.push(tunnel.etat.ecran.nom))
+
+    appelsReservation[0].resoudre({ ok: false, erreur: { statut: 409, code: 'slot_cancelled' } })
+    await laisserFiler()
+
+    expect(tunnel.etat.ecran).toEqual({ nom: 'creneau-annule', cours: TOUR })
+    expect(vus).toEqual(['creneau-annule'])
+    expect(tunnel.etat.saisie.email).toBe('camille@exemple.fr')
+    expect(tunnel.etat.creneaux).toEqual({ etat: 'en-chargement' })
+    expect(appelsCreneaux).toHaveLength(2)
+  })
+})
+
+describe('voir toutes les dates après un refus', () => {
+  it('affiche les créneaux en chargement tant qu’ils ne sont pas rechargés, puis les créneaux rafraîchis', async () => {
+    const { tunnel, appelsReservation, appelsCreneaux } = await tunnelEnEnvoi()
+    const rafraichi = { ...PROCHE, seats_available: 0 }
+    const autre = creneau('autre', '2026-10-26T14:00:00Z')
+    appelsReservation[0].resoudre({ ok: false, erreur: { statut: 409, code: 'slot_full', available: 0 } })
+    await laisserFiler()
+
+    tunnel.voirToutesLesDates()
+
+    expect(tunnel.etat.ecran).toEqual({ nom: 'creneaux', cours: TOUR })
+    expect(tunnel.etat.creneaux).toEqual({ etat: 'en-chargement' })
+
+    appelsCreneaux[1].resoudre({ ok: true, donnees: { slots: [rafraichi, autre] } })
+    await laisserFiler()
+
+    expect(tunnel.etat.ecran).toEqual({ nom: 'creneaux', cours: TOUR })
+    expect(tunnel.etat.creneaux).toEqual({ etat: 'prete', liste: [rafraichi, autre] })
+  })
+
+  it('affiche directement les créneaux déjà rechargés, saisie intacte, depuis un créneau annulé', async () => {
+    const { tunnel, appelsReservation, appelsCreneaux } = await tunnelEnEnvoi()
+    const autre = creneau('autre', '2026-10-26T14:00:00Z')
+    appelsReservation[0].resoudre({ ok: false, erreur: { statut: 409, code: 'slot_cancelled' } })
+    await laisserFiler()
+    appelsCreneaux[1].resoudre({ ok: true, donnees: { slots: [autre] } })
+    await laisserFiler()
+
+    tunnel.voirToutesLesDates()
+
+    expect(tunnel.etat.ecran).toEqual({ nom: 'creneaux', cours: TOUR })
+    expect(tunnel.etat.creneaux).toEqual({ etat: 'prete', liste: [autre] })
+    expect(tunnel.etat.saisie.email).toBe('camille@exemple.fr')
+    expect(appelsCreneaux).toHaveLength(2)
+  })
+})
+
+describe('les créneaux rechargés après un refus arrivent en retard', () => {
+  it('ne quittent pas les coordonnées où la personne est repartie', async () => {
+    const { tunnel, appelsReservation, appelsCreneaux } = await tunnelEnEnvoi()
+    appelsReservation[0].resoudre({ ok: false, erreur: { statut: 409, code: 'slot_full', available: 1 } })
+    await laisserFiler()
+    const ecran = tunnel.etat.ecran
+    if (ecran.nom !== 'place-partie') throw new Error('attendu : place-partie')
+    tunnel.choisirCreneau(ecran.creneau)
+    const coordonnees = tunnel.etat.ecran
+
+    appelsCreneaux[1].resoudre({ ok: true, donnees: { slots: [PROCHE] } })
+    await laisserFiler()
+
+    expect(tunnel.etat.ecran).toBe(coordonnees)
+    expect(tunnel.etat.places).toBe(1)
+  })
+
+  it('n’écrasent pas les créneaux d’un autre cours choisi entre-temps', async () => {
+    const { tunnel, appelsReservation, appelsCreneaux } = await tunnelEnEnvoi()
+    const creneauModelage = creneau('modelage-1', '2026-10-25T14:00:00Z')
+    appelsReservation[0].resoudre({ ok: false, erreur: { statut: 409, code: 'slot_cancelled' } })
+    await laisserFiler()
+
+    tunnel.voirToutesLesDates()
+    tunnel.revenir()
+    tunnel.choisirCours(MODELAGE)
+    appelsCreneaux[2].resoudre({ ok: true, donnees: { slots: [creneauModelage] } })
+    await laisserFiler()
+    appelsCreneaux[1].resoudre({ ok: true, donnees: { slots: [PROCHE] } })
+    await laisserFiler()
+
+    expect(tunnel.etat.ecran).toEqual({ nom: 'creneaux', cours: MODELAGE })
+    expect(tunnel.etat.creneaux).toEqual({ etat: 'prete', liste: [creneauModelage] })
   })
 })
 

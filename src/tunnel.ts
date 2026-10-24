@@ -39,6 +39,13 @@ export type Ecran =
   // qu'on quitte cet écran, avant que l'hôte n'ait confirmé la fermeture.
   | { nom: 'confirmation'; cours: Course; creneau: Slot; code: string; total: number; email: string }
 
+  // Le refus n'est pas une erreur technique : c'est un écran à part entière.
+  // `creneau` porte les places restantes annoncées par le refus, puis par les
+  // créneaux rechargés, jamais celles, périmées, d'avant la saisie. Les alternatives restent vides tant que les
+  // créneaux ne sont pas rechargés, plutôt que périmées.
+  | { nom: 'place-partie'; cours: Course; creneau: Slot; alternatives: Slot[] }
+  | { nom: 'creneau-annule'; cours: Course }
+
 // Un chargement a son propre état, à côté de l'écran : la liste des cours et
 // celle des créneaux ne partagent pas le leur. Sinon le « Chargement… » des
 // créneaux s'affiche sur la liste des cours quand on y revient.
@@ -165,7 +172,32 @@ export function creerTunnel(dependances: {
       return
     }
 
-    changer({ creneaux: { etat: 'prete', liste: creneauxAVenir(resultat.donnees.slots) } })
+    const liste = creneauxAVenir(resultat.donnees.slots)
+    const ecran = etat.ecran
+
+    // L'écran du refus attendait ces créneaux pour proposer ses alternatives :
+    // même changement, un seul redessin. Ils sont plus récents que le refus :
+    // les places restantes du créneau refusé en sont reprises.
+    if (ecran.nom === 'place-partie' && ecran.cours.course_id === cours.course_id) {
+      const creneauRefuse = liste.find((creneau) => creneau.slot_id === ecran.creneau.slot_id) ?? ecran.creneau
+
+      changer({
+        creneaux: { etat: 'prete', liste },
+        ecran: { ...ecran, creneau: creneauRefuse, alternatives: alternatives(creneauRefuse, liste) },
+      })
+      return
+    }
+
+    changer({ creneaux: { etat: 'prete', liste } })
+  }
+
+  // Les trois plus proches : au-delà, on renvoie vers la liste complète. Le
+  // créneau refusé n'en fait pas partie, même s'il lui reste des places : on
+  // propose déjà de réduire la demande.
+  function alternatives(creneauRefuse: Slot, creneaux: Slot[]): Slot[] {
+    return creneaux
+      .filter((creneau) => creneau.slot_id !== creneauRefuse.slot_id && creneau.seats_available > 0)
+      .slice(0, 3)
   }
 
   // L'API peut renvoyer des créneaux déjà passés : on ne les propose pas.
@@ -182,6 +214,19 @@ export function creerTunnel(dependances: {
   // confirmation. Avant la fin, au contraire, la saisie survit à la fermeture.
   function saisieEffacee(): Partial<EtatTunnel> {
     return { saisie: SAISIE_VIDE, erreurs: {} }
+  }
+
+  // Même code HTTP pour deux refus, causes différentes : la place est partie,
+  // ou le cours lui-même n'a plus lieu. null : ce n'est pas un refus.
+  function ecranDeRefus(erreur: ErreurApi, cours: Course, creneau: Slot): Ecran | null {
+    if (erreur.code === 'slot_full') {
+      const restantes = erreur.available ?? 0
+      return { nom: 'place-partie', cours, creneau: { ...creneau, seats_available: restantes }, alternatives: [] }
+    }
+
+    if (erreur.code === 'slot_cancelled') return { nom: 'creneau-annule', cours }
+
+    return null
   }
 
   // Deux limites se cumulent : celle que l'atelier s'impose, et ce qui reste
@@ -256,8 +301,10 @@ export function creerTunnel(dependances: {
       chargerCreneaux(cours)
     },
 
+    // Depuis l'écran du refus aussi : une alternative, ou le créneau refusé
+    // lui-même avec les places qui lui restent, se choisit en un clic.
     choisirCreneau(creneau: Slot): void {
-      if (etat.ecran.nom !== 'creneaux') return
+      if (etat.ecran.nom !== 'creneaux' && etat.ecran.nom !== 'place-partie') return
       if (creneau.seats_available <= 0) return
 
       changer({
@@ -284,9 +331,9 @@ export function creerTunnel(dependances: {
       changer({ saisie: { ...etat.saisie, [champ]: valeur } })
     },
 
-    // Transitoire : rend l'échec que le tunnel ne traite pas encore, pour que
-    // le point d'entrée affiche le refus ou le message qui convient. Disparaît
-    // quand refus et échecs d'envoi rejoignent le tunnel (tickets 05 et 06).
+    // Transitoire : rend l'échec d'envoi que le tunnel ne traite pas encore,
+    // pour que le point d'entrée affiche le message qui convient. Disparaît
+    // quand les échecs d'envoi rejoignent le tunnel (ticket 06).
     async envoyer(): Promise<ErreurApi | null> {
       const ecran = etat.ecran
       if (ecran.nom !== 'coordonnees' || envoiEnCours) return null
@@ -342,6 +389,16 @@ export function creerTunnel(dependances: {
         return null
       }
 
+      // Un refus : les créneaux affichés datent d'avant la saisie, on les
+      // recharge pour ne proposer que des dates qui existent encore.
+      const refus = ecranDeRefus(resultat.erreur, cours, creneau)
+
+      if (refus) {
+        changer({ ecran: refus, creneaux: { etat: 'en-chargement' } })
+        chargerCreneaux(cours)
+        return null
+      }
+
       // On retourne au formulaire, saisie intacte.
       const coordonnees: Ecran = { nom: 'coordonnees', cours, creneau, placesMaximum: placesMaximum(creneau) }
 
@@ -370,6 +427,15 @@ export function creerTunnel(dependances: {
       if (etat.ecran.nom !== 'creneaux') return
 
       changer({ ecran: { nom: 'cours' } })
+    },
+
+    // Les créneaux ont été remis en chargement par le refus, dans le même
+    // changement que son écran : on ne peut tomber que sur ceux rechargés, ou
+    // sur leur chargement, jamais sur ceux d'avant le refus.
+    voirToutesLesDates(): void {
+      if (etat.ecran.nom !== 'place-partie' && etat.ecran.nom !== 'creneau-annule') return
+
+      changer({ ecran: { nom: 'creneaux', cours: etat.ecran.cours } })
     },
 
     hoteAFerme(): void {
