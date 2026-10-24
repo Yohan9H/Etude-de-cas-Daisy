@@ -4,6 +4,8 @@ Recette pour la case « Vérifié à la main dans la démo » des tickets.
 
 ## Lancer
 
+Avant de lancer : si les trois ports écoutent déjà, réutiliser la démo, car Vite sert le code à jour. Lire le scénario actif (`curl -s http://localhost:3001/__mock | grep 'Scénario actif'`) et le remettre à `ok` s'il ne l'est pas.
+
 `npm run demo` lance les trois serveurs : le widget et le loader (5173), le faux serveur (3001), les sites de démo (4000). Un agent le lance en tâche de fond, puis attend que les trois ports écoutent (`lsof -i :5173 -i :3001 -i :4000 | grep LISTEN`) : les serveurs démarrent en une à deux secondes, un contrôle immédiat les croit absents. Relancer alors que les ports sont pris échoue en `EADDRINUSE`.
 
 Arrêter : `lsof -ti :5173 -ti :3001 -ti :4000 | xargs kill`.
@@ -34,7 +36,7 @@ Après chaque fermeture, rouvrir : le tunnel repart de la liste des cours. Deux 
 
 ## Le faux serveur
 
-Sa page de contrôle, http://localhost:3001/__mock, choisit le scénario de réponse (refus, annulation, téléphone exigé, 429…) ; la liste fait foi dans `SCENARIOS` de `mock/server.mjs`. Un agent change de scénario sans navigateur : `curl "http://localhost:3001/__mock/set?scenario=<nom>"` (réponse 302), entre deux essais, jamais depuis un script exécuté dans la page. Un script interrompu laisse le serveur sur son dernier scénario, et l'essai suivant échoue sans raison apparente. Le scénario actif est rappelé dans la sortie de `npm run demo` (`[mock] ⚠  scénario « … » actif`) à chaque appel. Remettre `ok` avant d'arrêter la démo. Les tests du tunnel couvrent ces cas plus vite ; la démo sert à voir le rendu.
+Sa page de contrôle, http://localhost:3001/__mock, choisit le scénario de réponse (refus, annulation, téléphone exigé, 429…) ; la liste fait foi dans `SCENARIOS` de `mock/server.mjs`. Un agent change de scénario sans navigateur : `curl "http://localhost:3001/__mock/set?scenario=<nom>"` (réponse 302), entre deux essais, jamais depuis un script exécuté dans la page. Un script interrompu laisse le serveur sur son dernier scénario, et l'essai suivant échoue sans raison apparente. Le scénario actif est rappelé dans la sortie de `npm run demo` (`[mock] ⚠  scénario « … » actif`) à chaque appel. Remettre `ok` avant d'arrêter la démo. Le `POST /bookings` met toujours 1,5 à 4 s, quel que soit le scénario : de quoi fermer ou rouvrir pendant l'envoi. `slow` ne ralentit que les GET. Les tests du tunnel couvrent ces cas plus vite ; la démo sert à voir le rendu.
 
 ## Piloter le widget
 

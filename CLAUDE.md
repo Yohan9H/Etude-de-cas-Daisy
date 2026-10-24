@@ -2,7 +2,7 @@
 
 ### Issue tracker
 
-Issues et specs en fichiers markdown locaux sous `.scratch/<feature>/`. Voir `docs/agents/issue-tracker.md`.
+Issues et specs en fichiers markdown locaux sous `.scratch/<feature>/`. Lire, créer ou **livrer** un ticket (`Status: resolved`, `## Answer`) : voir `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
